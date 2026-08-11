@@ -18,15 +18,30 @@ class RecordingsDataTypeEnum(str, Enum):
 
 
 class RecordingsDataPublisher(Publisher[Any]):
-    """Publishes latest recording data."""
+    """Publishes latest recording data.
+
+    Payloads are always (camera, stream, timestamp, cache_path) 4-tuples,
+    where stream is a RecordStreamEnum .value string. There is no generic
+    publish() here on purpose: renaming it to publish_segment() means a
+    caller written against the old 3-tuple shape fails loudly with
+    AttributeError instead of silently publishing a malformed payload that
+    would crash CameraWatchdog's drain loop.
+    """
 
     topic_base = "recordings/"
 
     def __init__(self) -> None:
         super().__init__()
 
-    def publish(self, payload: Any, sub_topic: str = "") -> None:
-        super().publish(payload, sub_topic)
+    def publish_segment(
+        self,
+        camera: str,
+        stream: str,
+        timestamp: float | None,
+        cache_path: str | None,
+        sub_topic: str,
+    ) -> None:
+        super().publish((camera, stream, timestamp, cache_path), sub_topic)
 
 
 class RecordingsDataSubscriber(Subscriber):
