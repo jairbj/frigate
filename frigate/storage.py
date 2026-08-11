@@ -3,14 +3,17 @@
 import logging
 import shutil
 import threading
+from collections.abc import Iterable, Iterator
 from multiprocessing.synchronize import Event as MpEvent
 from pathlib import Path
+from typing import Any
 
 from peewee import SQL, fn
 
 from frigate.config import FrigateConfig
 from frigate.const import RECORD_DIR, REPLAY_CAMERA_PREFIX
 from frigate.models import Event, Recordings
+from frigate.record.types import RecordStreamEnum
 from frigate.util.builtin import clear_and_unlink
 
 logger = logging.getLogger(__name__)
@@ -31,7 +34,14 @@ class StorageMaintainer(threading.Thread):
         self.camera_storage_stats: dict[str, dict] = {}
 
     def calculate_camera_bandwidth(self) -> None:
-        """Calculate an average MB/hr for each camera."""
+        """Calculate an average MB/hr for each camera, summed across its streams.
+
+        A mixed-stream average (over the last 100 segments regardless of
+        stream) would land between the two streams' true rates whenever
+        both are active, since primary and secondary segments interleave
+        in start_time order. Each stream is averaged separately and the
+        results summed instead.
+        """
         for camera in self.config.cameras.keys():
             # Skip replay cameras
             if camera.startswith(REPLAY_CAMERA_PREFIX):
@@ -40,42 +50,60 @@ class StorageMaintainer(threading.Thread):
             # cameras with < 50 segments should be refreshed to keep size accurate
             # when few segments are available
             if self.camera_storage_stats.get(camera, {}).get("needs_refresh", True):
-                self.camera_storage_stats[camera] = {
-                    "needs_refresh": (
+                total_bandwidth = 0.0
+                any_needs_refresh = False
+
+                for stream in RecordStreamEnum:
+                    if (
                         Recordings.select(fn.COUNT("*"))
-                        .where(Recordings.camera == camera, Recordings.segment_size > 0)
+                        .where(
+                            Recordings.camera == camera,
+                            Recordings.stream == stream.value,
+                            Recordings.segment_size > 0,
+                        )
                         .scalar()
                         < 50
-                    )
-                }
+                    ):
+                        any_needs_refresh = True
 
-                # calculate MB/hr from last 100 segments
-                try:
-                    # Subquery to get last 100 segments, then average their bandwidth
-                    last_100 = (
-                        Recordings.select(bandwidth_equation.alias("bw"))
-                        .where(Recordings.camera == camera, Recordings.segment_size > 0)
-                        .order_by(Recordings.start_time.desc())
-                        .limit(100)
-                        .alias("recent")
-                    )
-
-                    bandwidth = round(
-                        Recordings.select(fn.AVG(SQL("bw"))).from_(last_100).scalar()
-                        * 3600,
-                        2,
-                    )
-
-                    if bandwidth > MAX_CALCULATED_BANDWIDTH:
-                        logger.warning(
-                            f"{camera} has a bandwidth of {bandwidth} MB/hr which exceeds the expected maximum. This typically indicates an issue with the cameras recordings."
+                    # calculate MB/hr from last 100 segments of this stream
+                    try:
+                        # Subquery to get last 100 segments, then average their bandwidth
+                        last_100 = (
+                            Recordings.select(bandwidth_equation.alias("bw"))
+                            .where(
+                                Recordings.camera == camera,
+                                Recordings.stream == stream.value,
+                                Recordings.segment_size > 0,
+                            )
+                            .order_by(Recordings.start_time.desc())
+                            .limit(100)
+                            .alias("recent")
                         )
-                        bandwidth = MAX_CALCULATED_BANDWIDTH
-                except TypeError:
-                    bandwidth = 0
 
-                self.camera_storage_stats[camera]["bandwidth"] = bandwidth
-                logger.debug(f"{camera} has a bandwidth of {bandwidth} MiB/hr.")
+                        stream_bandwidth = round(
+                            Recordings.select(fn.AVG(SQL("bw")))
+                            .from_(last_100)
+                            .scalar()
+                            * 3600,
+                            2,
+                        )
+                    except TypeError:
+                        stream_bandwidth = 0
+
+                    total_bandwidth += stream_bandwidth
+
+                if total_bandwidth > MAX_CALCULATED_BANDWIDTH:
+                    logger.warning(
+                        f"{camera} has a bandwidth of {total_bandwidth} MB/hr which exceeds the expected maximum. This typically indicates an issue with the cameras recordings."
+                    )
+                    total_bandwidth = MAX_CALCULATED_BANDWIDTH
+
+                self.camera_storage_stats[camera] = {
+                    "needs_refresh": any_needs_refresh,
+                    "bandwidth": total_bandwidth,
+                }
+                logger.debug(f"{camera} has a bandwidth of {total_bandwidth} MiB/hr.")
 
     def calculate_camera_usages(self) -> dict[str, dict]:
         """Calculate the storage usage of each camera."""
@@ -117,15 +145,9 @@ class StorageMaintainer(threading.Thread):
         )
         return remaining_storage < float(hourly_bandwidth)
 
-    def reduce_storage_consumption(self) -> None:
-        """Remove oldest hour of recordings."""
-        logger.debug("Starting storage cleanup.")
-        deleted_segments_size = 0
-        hourly_bandwidth = sum(
-            [b["bandwidth"] for b in self.camera_storage_stats.values()]
-        )
-
-        recordings = (
+    @staticmethod
+    def _stream_recordings_query(stream: RecordStreamEnum) -> Iterator[Any]:
+        return (
             Recordings.select(
                 Recordings.id,
                 Recordings.camera,
@@ -134,29 +156,30 @@ class StorageMaintainer(threading.Thread):
                 Recordings.segment_size,
                 Recordings.path,
             )
+            .where(Recordings.stream == stream.value)
             .order_by(Recordings.start_time.asc())
             .namedtuples()
             .iterator()
         )
 
-        retained_events = (
-            Event.select(
-                Event.start_time,
-                Event.end_time,
-            )
-            .where(
-                Event.retain_indefinitely == True,
-                Event.has_clip,
-            )
-            .order_by(Event.start_time.asc())
-            .namedtuples()
-        )
+    @staticmethod
+    def _delete_pass(
+        query: Iterable[Any],
+        retained_events: Any,
+        budget: float,
+        deleted_size: float,
+    ) -> tuple[float, list[Any]]:
+        """Delete recordings from query, skipping ones retained_events keeps.
 
+        Stops once deleted_size exceeds budget. retained_events must be
+        sorted by start_time; reusing the same cached namedtuples sequence
+        across multiple calls (e.g. once per stream) is safe since each
+        call tracks its own event_start cursor.
+        """
         event_start = 0
         deleted_recordings = []
-        for recording in recordings:
-            # check if 1 hour of storage has been reclaimed
-            if deleted_segments_size > hourly_bandwidth:
+        for recording in query:
+            if deleted_size > budget:
                 break
 
             keep = False
@@ -189,41 +212,87 @@ class StorageMaintainer(threading.Thread):
                 try:
                     clear_and_unlink(Path(recording.path), missing_ok=False)
                     deleted_recordings.append(recording)
-                    deleted_segments_size += recording.segment_size
+                    deleted_size += recording.segment_size
                 except FileNotFoundError:
                     # this file was not found so we must assume no space was cleaned up
                     pass
+
+        return deleted_size, deleted_recordings
+
+    @staticmethod
+    def _force_delete_pass(
+        query: Iterable[Any], budget: float, deleted_size: float
+    ) -> tuple[float, list[Any]]:
+        """Delete recordings from query unconditionally (ignoring retention)."""
+        deleted_recordings = []
+        for recording in query:
+            if deleted_size > budget:
+                break
+
+            try:
+                clear_and_unlink(Path(recording.path), missing_ok=False)
+                deleted_size += recording.segment_size
+                deleted_recordings.append(recording)
+            except FileNotFoundError:
+                # this file was not found so we must assume no space was cleaned up
+                pass
+
+        return deleted_size, deleted_recordings
+
+    def reduce_storage_consumption(self) -> None:
+        """Remove oldest hour of recordings, high-res before low-res.
+
+        The premise of dual-stream recording is that the low-res 24x7
+        timeline is the asset worth protecting; the high-res stream is a
+        bonus around events. Under disk pressure the correct sacrifice is
+        high-res, so primary is fully drained (both the non-retained and,
+        if still short, the force-delete pass) before secondary is touched.
+        """
+        logger.debug("Starting storage cleanup.")
+        deleted_segments_size = 0.0
+        hourly_bandwidth = sum(
+            [b["bandwidth"] for b in self.camera_storage_stats.values()]
+        )
+
+        retained_events = (
+            Event.select(
+                Event.start_time,
+                Event.end_time,
+            )
+            .where(
+                Event.retain_indefinitely == True,
+                Event.has_clip,
+            )
+            .order_by(Event.start_time.asc())
+            .namedtuples()
+        )
+
+        deleted_recordings = []
+        for stream in RecordStreamEnum:
+            if deleted_segments_size > hourly_bandwidth:
+                break
+            deleted_segments_size, newly_deleted = self._delete_pass(
+                self._stream_recordings_query(stream),
+                retained_events,
+                hourly_bandwidth,
+                deleted_segments_size,
+            )
+            deleted_recordings.extend(newly_deleted)
 
         # check if need to delete retained segments
         if deleted_segments_size < hourly_bandwidth:
             logger.error(
                 f"Could not clear {hourly_bandwidth} MB, currently {deleted_segments_size:.2f} MB have been cleared. Retained recordings must be deleted."
             )
-            recordings = (
-                Recordings.select(
-                    Recordings.id,
-                    Recordings.camera,
-                    Recordings.start_time,
-                    Recordings.end_time,
-                    Recordings.path,
-                    Recordings.segment_size,
-                )
-                .order_by(Recordings.start_time.asc())
-                .namedtuples()
-                .iterator()
-            )
-
-            for recording in recordings:
+            for stream in RecordStreamEnum:
                 if deleted_segments_size > hourly_bandwidth:
                     break
-
-                try:
-                    clear_and_unlink(Path(recording.path), missing_ok=False)
-                    deleted_segments_size += recording.segment_size
-                    deleted_recordings.append(recording)
-                except FileNotFoundError:
-                    # this file was not found so we must assume no space was cleaned up
-                    pass
+                deleted_segments_size, newly_deleted = self._force_delete_pass(
+                    self._stream_recordings_query(stream),
+                    hourly_bandwidth,
+                    deleted_segments_size,
+                )
+                deleted_recordings.extend(newly_deleted)
         else:
             logger.info(f"Cleaned up {deleted_segments_size:.2f} MB of recordings")
 

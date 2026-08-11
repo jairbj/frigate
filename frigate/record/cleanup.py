@@ -14,6 +14,7 @@ from playhouse.sqlite_ext import SqliteExtDatabase
 from frigate.config import CameraConfig, FrigateConfig, RetainModeEnum
 from frigate.const import CACHE_DIR, CLIPS_DIR, MAX_WAL_SIZE, RECORD_DIR
 from frigate.models import Previews, Recordings, ReviewSegment, UserReviewStatus
+from frigate.record.types import RecordStreamEnum
 from frigate.util.builtin import clear_and_unlink
 from frigate.util.media import remove_empty_directories
 
@@ -107,14 +108,22 @@ class RecordingCleanup(threading.Thread):
 
         return maybe_empty_dirs
 
-    def expire_existing_camera_recordings(
+    def expire_camera_stream_recordings(
         self,
         continuous_expire_date: float,
         motion_expire_date: float,
         config: CameraConfig,
+        stream: RecordStreamEnum,
         reviews: list[Any],
-    ) -> set[Path]:
-        """Delete recordings for existing camera based on retention config."""
+    ) -> tuple[set[Path], list[tuple[float, float]]]:
+        """Delete recordings for one stream of an existing camera based on retention config.
+
+        Returns (maybe_empty_dirs, kept_recordings). Previews are handled
+        separately by expire_camera_previews, once per camera across both
+        streams' kept_recordings -- they aren't stream-specific, and running
+        the previews pass per-stream would let one stream's pass delete
+        previews the other stream's kept_recordings would have saved.
+        """
         # Get the timestamp for cutoff of retained days
 
         # Get recordings to check for expiration
@@ -130,6 +139,7 @@ class RecordingCleanup(threading.Thread):
             )
             .where(
                 (Recordings.camera == config.name)
+                & (Recordings.stream == stream.value)
                 & (
                     (
                         (Recordings.end_time < continuous_expire_date)
@@ -216,6 +226,26 @@ class RecordingCleanup(threading.Thread):
                 Recordings.id << deleted_recordings_list[i : i + max_deletes]
             ).execute()
 
+        return maybe_empty_dirs, kept_recordings
+
+    def expire_camera_previews(
+        self,
+        config: CameraConfig,
+        continuous_expire_date: float,
+        motion_expire_date: float,
+        kept_recordings: list[tuple[float, float]],
+    ) -> set[Path]:
+        """Delete previews with no relevant recordings on any stream.
+
+        Previews aren't stream-specific, so this runs once per camera
+        against kept_recordings combined from all of that camera's
+        streams (sorted by start_time). continuous_expire_date and
+        motion_expire_date should be the most conservative (oldest) of
+        the per-stream cutoffs, so a short-retention stream doesn't cause
+        previews a longer-retention stream still needs to be deleted early.
+        """
+        maybe_empty_dirs: set[Path] = set()
+
         previews = (
             Previews.select(
                 Previews.id,
@@ -287,7 +317,10 @@ class RecordingCleanup(threading.Thread):
 
         # Handle deleted cameras
         expire_days = max(
-            self.config.record.continuous.days, self.config.record.motion.days
+            self.config.record.continuous.days,
+            self.config.record.motion.days,
+            self.config.record.secondary.continuous.days,
+            self.config.record.secondary.motion.days,
         )
         expire_before = (
             datetime.datetime.now() - datetime.timedelta(days=expire_days)
@@ -330,19 +363,34 @@ class RecordingCleanup(threading.Thread):
             now = datetime.datetime.now()
 
             maybe_empty_dirs |= self.expire_review_segments(config, now)
-            continuous_expire_date = (
-                now - datetime.timedelta(days=config.record.continuous.days)
-            ).timestamp()
-            motion_expire_date = (
-                now
-                - datetime.timedelta(
-                    days=max(
-                        config.record.motion.days, config.record.continuous.days
-                    )  # can't keep motion for less than continuous
-                )
-            ).timestamp()
 
-            # Get all the reviews to check against
+            # per-stream (continuous_expire_date, motion_expire_date) windows
+            windows: dict[RecordStreamEnum, tuple[float, float]] = {}
+            for stream in RecordStreamEnum:
+                continuous_cfg, motion_cfg = config.record.get_retention(stream)
+                continuous_expire_date = (
+                    now - datetime.timedelta(days=continuous_cfg.days)
+                ).timestamp()
+                motion_expire_date = (
+                    now
+                    - datetime.timedelta(
+                        days=max(
+                            motion_cfg.days, continuous_cfg.days
+                        )  # can't keep motion for less than continuous
+                    )
+                ).timestamp()
+                windows[stream] = (continuous_expire_date, motion_expire_date)
+
+            # reviews must cover the longest-lived stream's candidate range:
+            # candidate recordings for a stream can extend up to that
+            # stream's continuous_expire_date (the no-motion no-audio branch
+            # of the recordings query), so using the tightest (most recent)
+            # bound instead of the loosest here would fetch too narrow a
+            # review window and could delete segments that overlap a review
+            # a longer-retention stream still needs to check against.
+            review_bound = max(
+                continuous_expire_date for continuous_expire_date, _ in windows.values()
+            )
             reviews = (
                 ReviewSegment.select(
                     ReviewSegment.start_time,
@@ -351,18 +399,29 @@ class RecordingCleanup(threading.Thread):
                 )
                 .where(
                     ReviewSegment.camera == camera,
-                    # candidate recordings can extend up to continuous_expire_date
-                    # (the no-motion no-audio branch of the recordings query),
-                    # so reviews must cover that full range to avoid deleting
-                    # segments that overlap recent alerts/detections.
-                    ReviewSegment.start_time < continuous_expire_date,
+                    ReviewSegment.start_time < review_bound,
                 )
                 .order_by(ReviewSegment.start_time)
                 .namedtuples()
             )
 
-            maybe_empty_dirs |= self.expire_existing_camera_recordings(
-                continuous_expire_date, motion_expire_date, config, reviews
+            kept_all: list[tuple[float, float]] = []
+            for stream, (continuous_expire_date, motion_expire_date) in windows.items():
+                dirs, kept = self.expire_camera_stream_recordings(
+                    continuous_expire_date, motion_expire_date, config, stream, reviews
+                )
+                maybe_empty_dirs |= dirs
+                kept_all.extend(kept)
+
+            # most conservative (oldest) cutoff across streams -- see
+            # expire_camera_previews docstring
+            previews_continuous_date = min(c for c, _ in windows.values())
+            previews_motion_date = min(m for _, m in windows.values())
+            maybe_empty_dirs |= self.expire_camera_previews(
+                config,
+                previews_continuous_date,
+                previews_motion_date,
+                sorted(kept_all),
             )
             logger.debug(f"End camera: {camera}.")
 

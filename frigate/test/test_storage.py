@@ -12,6 +12,7 @@ from playhouse.sqliteq import SqliteQueueDatabase
 
 from frigate.config import FrigateConfig
 from frigate.models import Event, Recordings
+from frigate.record.types import RecordStreamEnum
 from frigate.storage import StorageMaintainer
 from frigate.test.const import TEST_DB, TEST_DB_CLEANUPS
 
@@ -260,6 +261,94 @@ class TestHttp(unittest.TestCase):
         assert Recordings.get(Recordings.id == rec_k2_id)
         assert Recordings.get(Recordings.id == rec_k3_id)
 
+    def test_reduce_storage_consumption_deletes_primary_before_secondary(self):
+        """High-res (primary) must be fully drained before secondary is
+        touched, since the 24x7 low-res timeline is the asset dual-stream
+        recording is meant to protect."""
+        config = FrigateConfig(**self.minimal_config)
+        storage = StorageMaintainer(config, MagicMock())
+
+        time_old = datetime.datetime.now().timestamp() - 3600
+
+        primary_ids = []
+        for i in range(3):
+            pid = f"{1000 + i}.primary"
+            primary_ids.append(pid)
+            _insert_mock_recording(
+                pid,
+                os.path.join(self.test_dir, f"{pid}.tmp"),
+                time_old + i * 10,
+                time_old + i * 10 + 10,
+                seg_size=10,
+                stream=RecordStreamEnum.primary.value,
+            )
+
+        secondary_ids = []
+        for i in range(3):
+            sid = f"{2000 + i}.secondary"
+            secondary_ids.append(sid)
+            _insert_mock_recording(
+                sid,
+                os.path.join(self.test_dir, f"{sid}.tmp"),
+                time_old + i * 10,
+                time_old + i * 10 + 10,
+                seg_size=10,
+                stream=RecordStreamEnum.secondary.value,
+            )
+
+        # budget clears in the primary pass alone (30 MB of primary available,
+        # budget only needs ~15), so secondary should never be touched
+        storage.camera_storage_stats = {
+            "front_door": {"bandwidth": 15, "needs_refresh": False}
+        }
+        storage.reduce_storage_consumption()
+
+        remaining_primary = Recordings.select().where(Recordings.id << primary_ids)
+        remaining_secondary = Recordings.select().where(Recordings.id << secondary_ids)
+
+        self.assertLess(remaining_primary.count(), 3)
+        self.assertEqual(remaining_secondary.count(), 3)
+
+    def test_calculate_camera_bandwidth_sums_per_stream_rates(self):
+        """A mixed-stream average over the interleaved last-100 segments
+        would land between the two streams' true rates; the correct
+        behavior is to average each stream separately and sum."""
+        config = FrigateConfig(**self.minimal_config)
+        storage = StorageMaintainer(config, MagicMock())
+
+        time_keep = datetime.datetime.now().timestamp()
+
+        for i in range(5):
+            pid = f"{3000 + i}.primary"
+            _insert_mock_recording(
+                pid,
+                os.path.join(self.test_dir, f"{pid}.tmp"),
+                time_keep + i * 10,
+                time_keep + i * 10 + 10,
+                seg_size=10,
+                seg_dur=10,
+                stream=RecordStreamEnum.primary.value,
+            )
+
+        for i in range(5):
+            sid = f"{4000 + i}.secondary"
+            _insert_mock_recording(
+                sid,
+                os.path.join(self.test_dir, f"{sid}.tmp"),
+                time_keep + i * 10,
+                time_keep + i * 10 + 10,
+                seg_size=1,
+                seg_dur=10,
+                stream=RecordStreamEnum.secondary.value,
+            )
+
+        storage.calculate_camera_bandwidth()
+
+        # primary: 10MB / 10s -> 1 MB/s -> 3600 MB/hr
+        # secondary: 1MB / 10s -> 0.1 MB/s -> 360 MB/hr
+        # correct: 3600 + 360 = 3960; a naive combined average would give 1980
+        self.assertEqual(storage.camera_storage_stats["front_door"]["bandwidth"], 3960)
+
 
 def _insert_mock_event(
     id: str,
@@ -297,6 +386,7 @@ def _insert_mock_recording(
     camera="front_door",
     seg_size=8,
     seg_dur=10,
+    stream="primary",
 ) -> Event:
     """Inserts a basic recording model with a given id."""
     # we must open the file so storage maintainer will delete it
@@ -313,4 +403,5 @@ def _insert_mock_recording(
         motion=True,
         objects=True,
         segment_size=seg_size,
+        stream=stream,
     ).execute()
