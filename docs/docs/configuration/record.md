@@ -129,6 +129,55 @@ record:
 </TabItem>
 </ConfigTabs>
 
+### Blue Iris style: 24x7 low-resolution recording, high-resolution only around events
+
+To keep continuous 24x7 coverage cheap while still getting full-resolution footage around anything worth reviewing (similar to Blue Iris's "continuous + trigger" recording), configure a second, low-resolution input with the `record_secondary` role and give it its own long-running retention, while the primary (high-resolution) stream is retained only around alerts and detections. See [Recording a secondary, continuous low-resolution stream](#recording-a-secondary-continuous-low-resolution-stream) below for the full explanation of how this works.
+
+<ConfigTabs>
+<TabItem value="yaml">
+
+```yaml
+cameras:
+  front_door:
+    ffmpeg:
+      output_args:
+        record: preset-record-generic-audio-aac
+        record_secondary: preset-record-generic # optional; -an drops audio on the low-res stream
+      inputs:
+        - path: rtsp://camera-ip/main-stream # high resolution
+          roles:
+            - record
+        - path: rtsp://camera-ip/sub-stream # low resolution
+          roles:
+            - detect
+            - record_secondary
+    record:
+      enabled: true
+      # high resolution: only keep video around review items
+      continuous:
+        days: 0
+      motion:
+        days: 0
+      alerts:
+        retain:
+          days: 30
+          mode: motion
+      detections:
+        retain:
+          days: 14
+          mode: motion
+      # low resolution: 24x7 continuous coverage
+      secondary:
+        enabled: true
+        continuous:
+          days: 60
+        motion:
+          days: 60
+```
+
+</TabItem>
+</ConfigTabs>
+
 ## Pre-capture and Post-capture
 
 The `pre_capture` and `post_capture` settings control how many seconds of video are included before and after an alert or detection. These can be configured independently for alerts and detections, and can be set globally or overridden per camera.
@@ -274,6 +323,44 @@ record:
 </ConfigTabs>
 
 This configuration will retain recording segments that overlap with alerts and detections for 10 days. Because multiple tracked objects can reference the same recording segments, this avoids storing duplicate footage for overlapping tracked objects and reduces overall storage needs.
+
+## Recording a secondary, continuous low-resolution stream
+
+Frigate can record a **second, independent stream** for a camera alongside the primary recording stream. The intended use is 24x7 continuous coverage at low resolution (cheap to store for a long time), while the primary stream is kept only around alerts and detections at full resolution -- the pattern shown in [Blue Iris style](#blue-iris-style-24x7-low-resolution-recording-high-resolution-only-around-events) above.
+
+### Requirements
+
+- A second camera **input** with the `record_secondary` role. This role requires the `record` role to also be assigned to an input on the same camera -- `record_secondary` augments the primary recording stream, it does not replace it.
+- `record_secondary` cannot be used on a camera with only a single configured input, since there is no second stream to record from.
+- The most common layout shares one connection between `detect` and `record_secondary` (`roles: [detect, record_secondary]`), so the low-resolution substream that already feeds detection is reused for recording instead of opening a second RTSP connection to the camera.
+
+### Configuration
+
+```yaml
+record:
+  enabled: true
+  secondary:
+    enabled: true
+    continuous:
+      days: 60 # <- number of days to keep continuous secondary-stream recordings
+    motion:
+      days: 60 # <- number of days to keep motion-triggered secondary-stream recordings
+```
+
+- `record.secondary.enabled` is independent of the primary stream's retention settings -- the two streams can be configured with completely different retention windows, as in the [Blue Iris style](#blue-iris-style-24x7-low-resolution-recording-high-resolution-only-around-events) example.
+- Turning off the master `record.enabled` switch stops both streams; `record.secondary.enabled` only controls the secondary stream on top of that.
+- `alerts`/`detections` retention (and their pre/post capture settings) are shared by both streams -- they are not duplicated per stream, since they describe how long to keep footage around a review item, not which stream to keep it on.
+- A custom `ffmpeg.output_args.record_secondary` can be set the same way as `output_args.record` (for example, to drop audio from the low-resolution stream with `-an`).
+
+### Storage and retention behavior
+
+- Recordings from the secondary stream are stored under a `secondary/` subdirectory alongside the primary stream's files (`YYYY-MM-DD/HH/<camera_name>/secondary/MM.SS.mp4`), so the two streams' storage footprint can be inspected or moved independently.
+- Under disk pressure, Frigate deletes high-resolution (primary) recordings before touching the low-resolution (secondary) stream, since the low-resolution 24x7 timeline is treated as the asset worth protecting.
+- Because two streams are being cached before being written to disk, dual-stream recording roughly doubles the cache directory's (`/tmp/cache`) space and RAM requirements compared to single-stream recording. See [the `/tmp/cache` area is separate](#the-tmpcache-area-is-separate) if you run into `No space left on device` errors after enabling a secondary stream.
+
+### Playback and export
+
+The History view's stream selector (next to the playback speed control) lets you switch between the high-resolution and low-resolution recordings for any camera that has a secondary stream configured; cameras without one see no change to the player. The timeline also shades ranges that are only available in low resolution, so you can see at a glance where the primary stream's shorter retention has already expired. [Exports](/usage/exports) can likewise be created from either stream.
 
 ## Can I have "continuous" recordings, but only at certain times?
 

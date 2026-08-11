@@ -58,11 +58,12 @@ A camera is enabled by default but can be disabled by using `enabled: False`. Ca
 
 Each role can only be assigned to one input per camera. The options for roles are as follows:
 
-| Role     | Description                                                                         |
-| -------- | ----------------------------------------------------------------------------------- |
-| `detect` | Main feed for object detection. [docs](object_detectors.md)                         |
-| `record` | Saves segments of the video feed based on configuration settings. [docs](record.md) |
-| `audio`  | Feed for audio based detection. [docs](audio_detectors.md)                          |
+| Role               | Description                                                                                                                                                |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `detect`           | Main feed for object detection. [docs](object_detectors.md)                                                                                                 |
+| `record`           | Saves segments of the video feed based on configuration settings. [docs](record.md)                                                                         |
+| `record_secondary` | Saves segments from a second, independent stream (e.g. a 24x7 low-resolution recording). Requires `record` on another input. [docs](record.md#recording-a-secondary-continuous-low-resolution-stream) |
+| `audio`            | Feed for audio based detection. [docs](audio_detectors.md)                                                                                                  |
 
 <ConfigTabs>
 <TabItem value="ui">
