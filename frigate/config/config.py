@@ -255,6 +255,25 @@ def verify_config_roles(camera_config: CameraConfig) -> None:
             f"Camera {camera_config.name} has record enabled, but record is not assigned to an input."
         )
 
+    if (
+        camera_config.record.secondary.enabled
+        and "record_secondary" not in assigned_roles
+    ):
+        raise ValueError(
+            f"Camera {camera_config.name} has record.secondary enabled, but "
+            "record_secondary is not assigned to an input."
+        )
+
+    if (
+        "record_secondary" in assigned_roles
+        and not camera_config.record.secondary.enabled
+    ):
+        logger.warning(
+            "Camera %s has the record_secondary role assigned but "
+            "record.secondary.enabled is false; ignoring the input",
+            camera_config.name,
+        )
+
     if camera_config.audio.enabled and "audio" not in assigned_roles:
         raise ValueError(
             f"Camera {camera_config.name} has audio events enabled, but audio is not assigned to an input."
@@ -275,14 +294,8 @@ def verify_valid_live_stream_names(
             )
 
 
-def verify_recording_segments_setup_with_reasonable_time(
-    camera_config: CameraConfig,
-) -> None:
-    """Verify that recording segments are setup and segment time is not greater than 60."""
-    record_args: list[str] = get_ffmpeg_arg_list(
-        camera_config.ffmpeg.output_args.record
-    )
-
+def _verify_segment_args(camera_name: str, record_args: list[str], label: str) -> None:
+    """Verify that segment args are set up and segment time is not greater than 60."""
     if record_args[0].startswith("preset"):
         return
 
@@ -290,15 +303,33 @@ def verify_recording_segments_setup_with_reasonable_time(
         seg_arg_index = record_args.index("-segment_time")
     except ValueError:
         raise ValueError(
-            f"Camera {camera_config.name} has no segment_time in \
-                         recording output args, segment args are required for record."
+            f"Camera {camera_name} has no segment_time in \
+                         {label} output args, segment args are required for record."
         ) from None
 
     if int(record_args[seg_arg_index + 1]) > 60:
         raise ValueError(
-            f"Camera {camera_config.name} has invalid segment_time output arg, \
-                         segment_time must be 60 or less."
+            f"Camera {camera_name} has invalid segment_time output arg in \
+                         {label} output args, segment_time must be 60 or less."
         )
+
+
+def verify_recording_segments_setup_with_reasonable_time(
+    camera_config: CameraConfig,
+) -> None:
+    """Verify that recording segments are setup and segment time is not greater than 60."""
+    record_args: list[str] = get_ffmpeg_arg_list(
+        camera_config.ffmpeg.output_args.record
+    )
+    _verify_segment_args(camera_config.name, record_args, "record")
+
+    assigned_roles = {r for i in camera_config.ffmpeg.inputs for r in i.roles}
+
+    if "record_secondary" in assigned_roles:
+        secondary_args: list[str] = get_ffmpeg_arg_list(
+            camera_config.ffmpeg.output_args.record_secondary
+        )
+        _verify_segment_args(camera_config.name, secondary_args, "record_secondary")
 
 
 def verify_zone_objects_are_tracked(camera_config: CameraConfig) -> None:
@@ -864,6 +895,9 @@ class FrigateConfig(FrigateBaseModel):
                 camera_config.audio_transcription.enabled
             )
             camera_config.record.enabled_in_config = camera_config.record.enabled
+            camera_config.record.secondary.enabled_in_config = (
+                camera_config.record.secondary.enabled
+            )
             camera_config.notifications.enabled_in_config = (
                 camera_config.notifications.enabled
             )

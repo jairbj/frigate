@@ -3,16 +3,18 @@
 import operator
 from functools import reduce
 
+from peewee import Expression
+
 from frigate.models import Recordings
 from frigate.record.types import RecordStreamEnum
 
 
-def overlaps(start_ts: float, end_ts: float):
+def overlaps(start_ts: float, end_ts: float) -> Expression:
     """Segments overlapping [start_ts, end_ts]."""
     return (Recordings.end_time >= start_ts) & (Recordings.start_time <= end_ts)
 
 
-def for_stream(stream: RecordStreamEnum | None):
+def for_stream(stream: RecordStreamEnum | None) -> Expression | None:
     """Stream predicate, or None for all streams."""
     return None if stream is None else (Recordings.stream == stream.value)
 
@@ -22,7 +24,7 @@ def camera_range(
     start_ts: float,
     end_ts: float,
     stream: RecordStreamEnum | None,
-):
+) -> Expression:
     """Recordings for a camera overlapping [start_ts, end_ts].
 
     stream has no default: every call site must state whether it wants a
@@ -40,7 +42,7 @@ def camera_at_time(
     camera: str,
     frame_time: float,
     stream: RecordStreamEnum | None,
-):
+) -> Expression:
     """The recording for a camera containing frame_time.
 
     stream has no default for the same reason as camera_range.

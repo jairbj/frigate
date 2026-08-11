@@ -129,8 +129,13 @@ class CameraConfigUpdateSubscriber:
             config.objects = updated_config
         elif update_type == CameraConfigUpdateEnum.record:
             old_enabled_in_config = config.record.enabled_in_config
+            old_secondary_enabled_in_config = config.record.secondary.enabled_in_config
             config.record = updated_config
-            if old_enabled_in_config != updated_config.enabled_in_config:
+            if (
+                old_enabled_in_config != updated_config.enabled_in_config
+                or old_secondary_enabled_in_config
+                != updated_config.secondary.enabled_in_config
+            ):
                 config.recreate_ffmpeg_cmds()
         elif update_type == CameraConfigUpdateEnum.review:
             config.review = updated_config
