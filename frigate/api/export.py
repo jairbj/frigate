@@ -74,6 +74,8 @@ from frigate.record.export import (
     PlaybackSourceEnum,
     validate_ffmpeg_args,
 )
+from frigate.record.queries import camera_range
+from frigate.record.types import RecordStreamEnum
 from frigate.util.path import sanitize_contained_path
 from frigate.util.time import is_current_hour
 
@@ -156,14 +158,10 @@ def _validate_export_source(
         recordings_count = (
             Recordings.select()
             .where(
-                Recordings.start_time.between(start_time, end_time)
-                | Recordings.end_time.between(start_time, end_time)
-                | (
-                    (start_time > Recordings.start_time)
-                    & (end_time < Recordings.end_time)
+                camera_range(
+                    camera_name, start_time, end_time, RecordStreamEnum.primary
                 )
             )
-            .where(Recordings.camera == camera_name)
             .count()
         )
 
@@ -224,13 +222,7 @@ def _get_item_recording_export_errors(
         recording_ranges = list(
             Recordings.select(Recordings.start_time, Recordings.end_time)
             .where(
-                Recordings.camera == camera_name,
-                Recordings.start_time.between(min_start, max_end)
-                | Recordings.end_time.between(min_start, max_end)
-                | (
-                    (min_start > Recordings.start_time)
-                    & (max_end < Recordings.end_time)
-                ),
+                camera_range(camera_name, min_start, max_end, RecordStreamEnum.primary)
             )
             .iterator()
         )

@@ -22,6 +22,8 @@ from frigate.const import (
 )
 from frigate.log import redirect_output_to_logger, suppress_stderr_during
 from frigate.models import Event, Recordings, ReviewSegment
+from frigate.record.queries import camera_at_time
+from frigate.record.types import RecordStreamEnum
 from frigate.types import ModelStatusTypesEnum
 from frigate.util.downloader import ModelDownloader
 from frigate.util.file import get_event_thumbnail_bytes, load_event_snapshot_image
@@ -551,11 +553,7 @@ def _extract_keyframes(
         try:
             recording = (
                 Recordings.select()
-                .where(
-                    (timestamp >= Recordings.start_time)
-                    & (timestamp <= Recordings.end_time)
-                    & (Recordings.camera == camera)
-                )
+                .where(camera_at_time(camera, timestamp, RecordStreamEnum.primary))
                 .order_by(Recordings.start_time.desc())
                 .limit(1)
                 .get()

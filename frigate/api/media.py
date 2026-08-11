@@ -44,6 +44,8 @@ from frigate.const import (
 )
 from frigate.models import Event, Previews, Recordings, Regions, ReviewSegment
 from frigate.output.preview import get_most_recent_preview_frame
+from frigate.record.queries import camera_at_time, camera_range
+from frigate.record.types import RecordStreamEnum
 from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.file import (
     get_event_snapshot_bytes,
@@ -314,11 +316,7 @@ async def get_snapshot_from_recording(
                 Recordings.path,
                 Recordings.start_time,
             )
-            .where(
-                (frame_time >= Recordings.start_time)
-                & (frame_time <= Recordings.end_time)
-            )
-            .where(Recordings.camera == camera_name)
+            .where(camera_at_time(camera_name, frame_time, RecordStreamEnum.primary))
             .order_by(Recordings.start_time.desc())
             .limit(1)
             .get()
@@ -334,10 +332,8 @@ async def get_snapshot_from_recording(
                     Recordings.start_time,
                 )
                 .where(
-                    (frame_time >= Recordings.start_time)
-                    & (frame_time <= Recordings.end_time)
+                    camera_at_time(camera_name, frame_time, RecordStreamEnum.primary)
                 )
-                .where(Recordings.camera == camera_name)
                 .order_by(Recordings.start_time.desc())
                 .limit(1)
                 .get()
@@ -389,15 +385,13 @@ async def submit_recording_snapshot_to_plus(
         )
 
     frame_time = float(frame_time)
+    # always primary: a low-resolution frame would poison the Frigate+ dataset
     recording_query = (
         Recordings.select(
             Recordings.path,
             Recordings.start_time,
         )
-        .where(
-            (frame_time >= Recordings.start_time) & (frame_time <= Recordings.end_time)
-        )
-        .where(Recordings.camera == camera_name)
+        .where(camera_at_time(camera_name, frame_time, RecordStreamEnum.primary))
         .order_by(Recordings.start_time.desc())
         .limit(1)
     )
@@ -478,12 +472,7 @@ async def recording_clip(
             Recordings.start_time,
             Recordings.end_time,
         )
-        .where(
-            (Recordings.start_time.between(start_ts, end_ts))
-            | (Recordings.end_time.between(start_ts, end_ts))
-            | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
-        )
-        .where(Recordings.camera == camera_name)
+        .where(camera_range(camera_name, start_ts, end_ts, RecordStreamEnum.primary))
         .order_by(Recordings.start_time.asc())
     )
 
@@ -574,12 +563,7 @@ async def vod_ts(
             Recordings.end_time,
             Recordings.start_time,
         )
-        .where(
-            Recordings.start_time.between(start_ts, end_ts)
-            | Recordings.end_time.between(start_ts, end_ts)
-            | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
-        )
-        .where(Recordings.camera == camera_name)
+        .where(camera_range(camera_name, start_ts, end_ts, RecordStreamEnum.primary))
         .order_by(Recordings.start_time.asc())
         .iterator()
     )

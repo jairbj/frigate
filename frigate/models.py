@@ -79,6 +79,10 @@ class Recordings(Model):
     segment_size = FloatField(default=0)  # this should be stored as MB
     regions = IntegerField(null=True)
     motion_heatmap = JSONField(null=True)  # 16x16 grid, 256 values (0-255)
+    stream = CharField(default="primary", max_length=20)  # RecordStreamEnum value
+
+    class Meta:
+        indexes = ((("camera", "stream", "start_time"), False),)
 
 
 class ExportCase(Model):
