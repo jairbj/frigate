@@ -14,6 +14,9 @@ ROLE_TO_STREAM: dict[str, RecordStreamEnum] = {
     "record_secondary": RecordStreamEnum.secondary,
 }
 
+# stream -> role name, e.g. for building "{camera}/status/{role}" MQTT topics.
+STREAM_TO_ROLE: dict[RecordStreamEnum, str] = {v: k for k, v in ROLE_TO_STREAM.items()}
+
 
 def cache_segment_prefix(camera: str, stream: RecordStreamEnum) -> str:
     """Cache filename prefix for a camera/stream (primary keeps the legacy name)."""

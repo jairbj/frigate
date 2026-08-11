@@ -67,6 +67,7 @@ from frigate.events.types import (
 )
 from frigate.genai import GenAIClientManager
 from frigate.models import Event, Recordings, ReviewSegment, Trigger
+from frigate.record.types import RecordStreamEnum
 from frigate.types import TrackedObjectUpdateTypesEnum
 from frigate.util.builtin import serialize
 from frigate.util.file import get_event_thumbnail_bytes
@@ -695,7 +696,17 @@ class EmbeddingMaintainer(threading.Thread):
             topic = str(raw_topic)
 
             if topic.endswith(RecordingsDataTypeEnum.saved.value):
-                camera, recordings_available_through_timestamp, _ = payload
+                (
+                    camera,
+                    stream,
+                    recordings_available_through_timestamp,
+                    _,
+                ) = payload
+
+                # LPR post-processing runs on the primary (high-res) stream;
+                # the secondary stream's availability is irrelevant here.
+                if stream != RecordStreamEnum.primary.value:
+                    continue
 
                 self.recordings_available_through[camera] = (
                     recordings_available_through_timestamp
