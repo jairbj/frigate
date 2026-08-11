@@ -30,6 +30,8 @@ from frigate.ffmpeg_presets import (
     parse_preset_hardware_acceleration_encode,
 )
 from frigate.models import Export, Previews, Recordings, ReviewSegment
+from frigate.record.queries import camera_range
+from frigate.record.types import RecordStreamEnum
 from frigate.util.ffmpeg import run_ffmpeg_with_progress
 from frigate.util.time import is_current_hour
 
@@ -296,14 +298,13 @@ class RecordingExporter(threading.Thread):
                 rows = (
                     Recordings.select(Recordings.start_time, Recordings.end_time)
                     .where(
-                        Recordings.start_time.between(self.start_time, self.end_time)
-                        | Recordings.end_time.between(self.start_time, self.end_time)
-                        | (
-                            (self.start_time > Recordings.start_time)
-                            & (self.end_time < Recordings.end_time)
+                        camera_range(
+                            self.camera,
+                            self.start_time,
+                            self.end_time,
+                            RecordStreamEnum.primary,
                         )
                     )
-                    .where(Recordings.camera == self.camera)
                     .iterator()
                 )
             else:
@@ -697,14 +698,13 @@ class RecordingExporter(threading.Thread):
                 Recordings.end_time,
             )
             .where(
-                Recordings.start_time.between(self.start_time, self.end_time)
-                | Recordings.end_time.between(self.start_time, self.end_time)
-                | (
-                    (self.start_time > Recordings.start_time)
-                    & (self.end_time < Recordings.end_time)
+                camera_range(
+                    self.camera,
+                    self.start_time,
+                    self.end_time,
+                    RecordStreamEnum.primary,
                 )
             )
-            .where(Recordings.camera == self.camera)
             .order_by(Recordings.start_time.asc())
             .iterator()
         )

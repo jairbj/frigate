@@ -27,6 +27,8 @@ from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
 from frigate.const import RECORD_DIR
 from frigate.models import Event, Recordings
+from frigate.record.queries import camera_range, overlaps
+from frigate.record.types import RecordStreamEnum
 from frigate.util.time import get_dst_transitions
 
 logger = logging.getLogger(__name__)
@@ -241,11 +243,7 @@ async def recordings(
             Recordings.motion_heatmap,
             Recordings.duration,
         )
-        .where(
-            Recordings.camera == camera_name,
-            Recordings.end_time >= after,
-            Recordings.start_time <= before,
-        )
+        .where(camera_range(camera_name, after, before, RecordStreamEnum.primary))
         .order_by(Recordings.start_time)
         .dicts()
         .iterator()
@@ -401,13 +399,10 @@ async def delete_recordings(
     if params.keep:
         keep_set = set(params.keep.split(","))
 
-    # Build query to find overlapping recordings
+    # Build query to find overlapping recordings (all streams: an admin
+    # deleting a time range wants both resolutions gone)
     clauses = [
-        (
-            Recordings.start_time.between(start, end)
-            | Recordings.end_time.between(start, end)
-            | ((start > Recordings.start_time) & (end < Recordings.end_time))
-        ),
+        overlaps(start, end),
         (Recordings.camera << camera_list),
     ]
 

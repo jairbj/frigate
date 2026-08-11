@@ -34,6 +34,8 @@ from frigate.jobs.motion_search_decode import (
     resolve_motion_decode_args,
 )
 from frigate.models import Recordings
+from frigate.record.queries import camera_range
+from frigate.record.types import RecordStreamEnum
 from frigate.types import JobStatusTypesEnum
 
 logger = logging.getLogger(__name__)
@@ -469,22 +471,13 @@ class MotionSearchRunner(threading.Thread):
         recordings = list(
             Recordings.select()
             .where(
-                (
-                    Recordings.start_time.between(
-                        self.job.start_time_range, self.job.end_time_range
-                    )
-                )
-                | (
-                    Recordings.end_time.between(
-                        self.job.start_time_range, self.job.end_time_range
-                    )
-                )
-                | (
-                    (self.job.start_time_range > Recordings.start_time)
-                    & (self.job.end_time_range < Recordings.end_time)
+                camera_range(
+                    camera_name,
+                    self.job.start_time_range,
+                    self.job.end_time_range,
+                    RecordStreamEnum.primary,
                 )
             )
-            .where(Recordings.camera == camera_name)
             .order_by(Recordings.start_time.asc())
         )
 

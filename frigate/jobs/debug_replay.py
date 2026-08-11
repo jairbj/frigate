@@ -25,6 +25,8 @@ from frigate.jobs.export import JobStatePublisher
 from frigate.jobs.job import Job
 from frigate.jobs.manager import job_is_running, set_current_job
 from frigate.models import Export, Recordings
+from frigate.record.queries import camera_range
+from frigate.record.types import RecordStreamEnum
 from frigate.types import JobStatusTypesEnum
 from frigate.util.ffmpeg import run_ffmpeg_with_progress
 
@@ -104,12 +106,7 @@ def query_recordings(source_camera: str, start_ts: float, end_ts: float) -> Mode
             Recordings.start_time,
             Recordings.end_time,
         )
-        .where(
-            Recordings.start_time.between(start_ts, end_ts)
-            | Recordings.end_time.between(start_ts, end_ts)
-            | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
-        )
-        .where(Recordings.camera == source_camera)
+        .where(camera_range(source_camera, start_ts, end_ts, RecordStreamEnum.primary))
         .order_by(Recordings.start_time.asc())
     )
     return cast(ModelSelect, query)
