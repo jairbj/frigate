@@ -21,6 +21,7 @@ import numpy as np
 from ruamel.yaml import YAML
 
 from frigate.const import REGEX_HTTP_CAMERA_USER_PASS, REGEX_RTSP_CAMERA_USER_PASS
+from frigate.record.types import RecordStreamEnum
 
 if TYPE_CHECKING:
     from frigate.config import CameraConfig
@@ -137,9 +138,17 @@ def get_ffmpeg_arg_list(arg: Any) -> list:
 DEFAULT_RECORD_SEGMENT_TIME = 10
 
 
-def get_record_segment_time(config: "CameraConfig") -> int:
-    """Extract -segment_time from the camera's record output args."""
-    record_args = get_ffmpeg_arg_list(config.ffmpeg.output_args.record)
+def get_record_segment_time(
+    config: "CameraConfig",
+    stream: RecordStreamEnum = RecordStreamEnum.primary,
+) -> int:
+    """Extract -segment_time from the camera's record output args for the given stream."""
+    output_args = (
+        config.ffmpeg.output_args.record_secondary
+        if stream == RecordStreamEnum.secondary
+        else config.ffmpeg.output_args.record
+    )
+    record_args = get_ffmpeg_arg_list(output_args)
 
     if record_args and record_args[0].startswith("preset"):
         return DEFAULT_RECORD_SEGMENT_TIME

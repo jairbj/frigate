@@ -42,6 +42,11 @@ class FfmpegOutputArgsConfig(FrigateBaseModel):
         title="Record output arguments",
         description="Default output arguments for record role streams.",
     )
+    record_secondary: str | list[str] = Field(
+        default=RECORD_FFMPEG_OUTPUT_ARGS_DEFAULT,
+        title="Secondary record output arguments",
+        description="Default output arguments for the secondary (continuous) record role stream.",
+    )
 
 
 class FfmpegConfig(FrigateBaseModel):
@@ -99,6 +104,7 @@ class FfmpegConfig(FrigateBaseModel):
 class CameraRoleEnum(str, Enum):
     audio = "audio"
     record = "record"
+    record_secondary = "record_secondary"
     detect = "detect"
 
 
@@ -144,5 +150,10 @@ class CameraFfmpegConfig(FfmpegConfig):
 
         if "detect" not in roles:
             raise ValueError("The detect role is required.")
+
+        if "record_secondary" in roles and "record" not in roles:
+            raise ValueError(
+                "The record_secondary role requires the record role to also be assigned."
+            )
 
         return v

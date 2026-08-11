@@ -10,6 +10,7 @@ from frigate.ffmpeg_presets import (
     parse_preset_input,
     parse_preset_output_record,
 )
+from frigate.record.types import RecordStreamEnum, cache_segment_prefix
 from frigate.util.builtin import (
     escape_special_characters,
     generate_color_palette,
@@ -215,7 +216,15 @@ class CameraConfig(FrigateBaseModel):
 
         # add roles to the input if there is only one
         if len(config["ffmpeg"]["inputs"]) == 1:
-            has_audio = "audio" in config["ffmpeg"]["inputs"][0].get("roles", [])
+            existing_roles = config["ffmpeg"]["inputs"][0].get("roles", [])
+
+            if "record_secondary" in existing_roles:
+                raise ValueError(
+                    "record_secondary requires a second input; a camera with a "
+                    "single input cannot record two streams."
+                )
+
+            has_audio = "audio" in existing_roles
 
             config["ffmpeg"]["inputs"][0]["roles"] = [
                 "record",
@@ -279,6 +288,29 @@ class CameraConfig(FrigateBaseModel):
 
             ffmpeg_output_args = scale_detect_args + ffmpeg_output_args + ["pipe:"]
 
+        if (
+            "record_secondary" in ffmpeg_input.roles
+            and self.record.enabled
+            and self.record.secondary.enabled
+        ):
+            secondary_args = get_ffmpeg_arg_list(
+                parse_preset_output_record(
+                    self.ffmpeg.output_args.record_secondary,
+                    self.ffmpeg.apple_compatibility,
+                )
+                or self.ffmpeg.output_args.record_secondary
+            )
+
+            secondary_target = os.path.join(
+                CACHE_DIR,
+                f"{cache_segment_prefix(self.name, RecordStreamEnum.secondary)}"
+                f"@{CACHE_SEGMENT_FORMAT}.mp4",
+            )
+
+            ffmpeg_output_args = (
+                secondary_args + [secondary_target] + ffmpeg_output_args
+            )
+
         if "record" in ffmpeg_input.roles and self.record.enabled:
             record_args = get_ffmpeg_arg_list(
                 parse_preset_output_record(
@@ -288,11 +320,13 @@ class CameraConfig(FrigateBaseModel):
                 or self.ffmpeg.output_args.record
             )
 
-            ffmpeg_output_args = (
-                record_args
-                + [f"{os.path.join(CACHE_DIR, self.name)}@{CACHE_SEGMENT_FORMAT}.mp4"]
-                + ffmpeg_output_args
+            record_target = os.path.join(
+                CACHE_DIR,
+                f"{cache_segment_prefix(self.name, RecordStreamEnum.primary)}"
+                f"@{CACHE_SEGMENT_FORMAT}.mp4",
             )
+
+            ffmpeg_output_args = record_args + [record_target] + ffmpeg_output_args
 
         # if there aren't any outputs enabled for this input
         if len(ffmpeg_output_args) == 0:

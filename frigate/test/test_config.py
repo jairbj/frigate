@@ -1577,6 +1577,170 @@ class TestConfig(unittest.TestCase):
             lambda: FrigateConfig(**config).ffmpeg.output_args.record,
         )
 
+    def test_record_secondary_generates_two_ffmpeg_cmds(self):
+        config = {
+            "mqtt": {"host": "mqtt"},
+            "cameras": {
+                "back": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {
+                                "path": "rtsp://10.0.0.1:554/main",
+                                "roles": ["record"],
+                            },
+                            {
+                                "path": "rtsp://10.0.0.1:554/sub",
+                                "roles": ["detect", "record_secondary"],
+                            },
+                        ]
+                    },
+                    "detect": {
+                        "height": 1080,
+                        "width": 1920,
+                        "fps": 5,
+                    },
+                    "record": {
+                        "enabled": True,
+                        "secondary": {"enabled": True},
+                    },
+                }
+            },
+        }
+
+        frigate_config = FrigateConfig(**config)
+        ffmpeg_cmds = frigate_config.cameras["back"].ffmpeg_cmds
+        self.assertEqual(len(ffmpeg_cmds), 2)
+
+        record_cmd = next(c["cmd"] for c in ffmpeg_cmds if c["roles"] == ["record"])
+        self.assertTrue(any("/tmp/cache/back@" in part for part in record_cmd))
+
+        secondary_cmd = next(
+            c["cmd"]
+            for c in ffmpeg_cmds
+            if set(c["roles"]) == {"detect", "record_secondary"}
+        )
+        self.assertTrue(
+            any("/tmp/cache/back#secondary@" in part for part in secondary_cmd)
+        )
+        # detect's pipe: output must be the last argument
+        self.assertEqual(secondary_cmd[-1], "pipe:")
+
+    def test_record_secondary_without_record_role_throws_error(self):
+        config = {
+            "mqtt": {"host": "mqtt"},
+            "cameras": {
+                "back": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {
+                                "path": "rtsp://10.0.0.1:554/main",
+                                "roles": ["detect"],
+                            },
+                            {
+                                "path": "rtsp://10.0.0.1:554/sub",
+                                "roles": ["record_secondary"],
+                            },
+                        ]
+                    },
+                    "detect": {
+                        "height": 1080,
+                        "width": 1920,
+                        "fps": 5,
+                    },
+                }
+            },
+        }
+
+        self.assertRaises(ValueError, lambda: FrigateConfig(**config))
+
+    def test_record_secondary_single_input_throws_error(self):
+        config = {
+            "mqtt": {"host": "mqtt"},
+            "cameras": {
+                "back": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {
+                                "path": "rtsp://10.0.0.1:554/video",
+                                "roles": ["detect", "record_secondary"],
+                            },
+                        ]
+                    },
+                    "detect": {
+                        "height": 1080,
+                        "width": 1920,
+                        "fps": 5,
+                    },
+                    "record": {
+                        "enabled": True,
+                        "secondary": {"enabled": True},
+                    },
+                }
+            },
+        }
+
+        self.assertRaises(ValueError, lambda: FrigateConfig(**config))
+
+    def test_record_secondary_enabled_without_role_throws_error(self):
+        config = {
+            "mqtt": {"host": "mqtt"},
+            "cameras": {
+                "back": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {
+                                "path": "rtsp://10.0.0.1:554/main",
+                                "roles": ["record", "detect"],
+                            },
+                        ]
+                    },
+                    "detect": {
+                        "height": 1080,
+                        "width": 1920,
+                        "fps": 5,
+                    },
+                    "record": {
+                        "enabled": True,
+                        "secondary": {"enabled": True},
+                    },
+                }
+            },
+        }
+
+        self.assertRaises(ValueError, lambda: FrigateConfig(**config))
+
+    def test_record_secondary_bad_segment_time_throws_error(self):
+        config = {
+            "mqtt": {"host": "mqtt"},
+            "record": {"enabled": True, "secondary": {"enabled": True}},
+            "cameras": {
+                "back": {
+                    "ffmpeg": {
+                        "output_args": {
+                            "record_secondary": "-f segment -segment_time 70 -segment_format mp4 -reset_timestamps 1 -strftime 1 -c copy -an"
+                        },
+                        "inputs": [
+                            {
+                                "path": "rtsp://10.0.0.1:554/main",
+                                "roles": ["record"],
+                            },
+                            {
+                                "path": "rtsp://10.0.0.1:554/sub",
+                                "roles": ["detect", "record_secondary"],
+                            },
+                        ],
+                    },
+                    "detect": {
+                        "height": 1080,
+                        "width": 1920,
+                        "fps": 5,
+                    },
+                }
+            },
+        }
+
+        self.assertRaises(ValueError, lambda: FrigateConfig(**config))
+
     def test_fails_zone_defines_untracked_object(self):
         config = {
             "mqtt": {"host": "mqtt"},

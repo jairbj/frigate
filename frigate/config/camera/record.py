@@ -3,6 +3,7 @@ from enum import Enum
 from pydantic import Field
 
 from frigate.const import MAX_PRE_CAPTURE
+from frigate.record.types import RecordStreamEnum
 from frigate.review.types import SeverityEnum
 
 from ..base import FrigateBaseModel
@@ -13,6 +14,7 @@ __all__ = [
     "RecordExportConfig",
     "RecordPreviewConfig",
     "RecordQualityEnum",
+    "RecordSecondaryConfig",
     "EventsConfig",
     "ReviewRetainConfig",
     "RecordRetainConfig",
@@ -110,6 +112,29 @@ class RecordExportConfig(FrigateBaseModel):
     )
 
 
+class RecordSecondaryConfig(FrigateBaseModel):
+    enabled: bool = Field(
+        default=False,
+        title="Enable secondary recording",
+        description="Enable a second, continuous recording stream (e.g. a low-resolution substream) alongside the primary record stream.",
+    )
+    continuous: RecordRetainConfig = Field(
+        default_factory=RecordRetainConfig,
+        title="Secondary continuous retention",
+        description="Number of days to retain the secondary stream's recordings regardless of tracked objects or motion.",
+    )
+    motion: RecordRetainConfig = Field(
+        default_factory=RecordRetainConfig,
+        title="Secondary motion retention",
+        description="Number of days to retain the secondary stream's recordings triggered by motion regardless of tracked objects.",
+    )
+    enabled_in_config: bool | None = Field(
+        default=None,
+        title="Original secondary recording state",
+        description="Indicates whether secondary recording was enabled in the original static configuration.",
+    )
+
+
 class RecordConfig(FrigateBaseModel):
     enabled: bool = Field(
         default=False,
@@ -151,6 +176,11 @@ class RecordConfig(FrigateBaseModel):
         title="Preview config",
         description="Settings controlling the quality of recording previews shown in the UI.",
     )
+    secondary: RecordSecondaryConfig = Field(
+        default_factory=RecordSecondaryConfig,
+        title="Secondary recording stream",
+        description="Settings for a second, continuous recording stream (e.g. low-resolution 24x7 coverage).",
+    )
     enabled_in_config: bool | None = Field(
         default=None,
         title="Original recording state",
@@ -175,3 +205,30 @@ class RecordConfig(FrigateBaseModel):
             return self.alerts.post_capture
         else:
             return self.detections.post_capture
+
+    def get_retention(
+        self, stream: RecordStreamEnum
+    ) -> tuple[RecordRetainConfig, RecordRetainConfig]:
+        """Return (continuous, motion) retention config for the given stream."""
+        if stream == RecordStreamEnum.secondary:
+            return self.secondary.continuous, self.secondary.motion
+        return self.continuous, self.motion
+
+    def stream_enabled(self, stream: RecordStreamEnum) -> bool:
+        """Whether the given stream should currently be recorded."""
+        if stream == RecordStreamEnum.secondary:
+            return self.enabled and self.secondary.enabled
+        return self.enabled
+
+    def enabled_streams(self) -> list[RecordStreamEnum]:
+        """All streams that should currently be recorded."""
+        return [s for s in RecordStreamEnum if self.stream_enabled(s)]
+
+    def timeline_stream(self) -> RecordStreamEnum:
+        """The stream with the broadest continuous coverage; drives timeline visuals."""
+        if (
+            self.secondary.enabled
+            and self.secondary.continuous.days >= self.continuous.days
+        ):
+            return RecordStreamEnum.secondary
+        return RecordStreamEnum.primary
