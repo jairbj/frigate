@@ -7,6 +7,7 @@ import { useMotionSegmentUtils } from "@/hooks/use-motion-segment-utils";
 import { isMobile } from "react-device-detect";
 import useTapUtils from "@/hooks/use-tap-utils";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 type MotionSegmentProps = {
   events: ReviewSegment[];
@@ -18,6 +19,7 @@ type MotionSegmentProps = {
   hasRecording?: boolean;
   prevIsNoRecording?: boolean;
   nextIsNoRecording?: boolean;
+  isLowResOnly?: boolean;
   motionOnly: boolean;
   showMinimap: boolean;
   minimapStartTime?: number;
@@ -38,6 +40,7 @@ export function MotionSegment({
   hasRecording,
   prevIsNoRecording,
   nextIsNoRecording,
+  isLowResOnly = false,
   motionOnly,
   showMinimap,
   minimapStartTime,
@@ -47,6 +50,7 @@ export function MotionSegment({
   dense,
   alwaysShowMotionLine = false,
 }: MotionSegmentProps) {
+  const { t } = useTranslation("components/player");
   const severityType = "all";
   const { getSeverity, getReviewed, displaySeverityType } =
     useEventSegmentUtils(segmentDuration, events, severityType);
@@ -204,6 +208,16 @@ export function MotionSegment({
           )}
           {isLastSegmentWithoutRecording && (
             <div className="absolute -top-[1px] left-0 right-0 h-[1px] bg-primary-variant/50" />
+          )}
+          {isLowResOnly && hasRecording != false && (
+            <div
+              className="pointer-events-none absolute inset-0 opacity-40"
+              style={{
+                backgroundImage:
+                  "repeating-linear-gradient(45deg, currentColor 0, currentColor 1px, transparent 1px, transparent 5px)",
+              }}
+              title={t("stream.lowResOnly")}
+            />
           )}
           {!motionOnly && (
             <>

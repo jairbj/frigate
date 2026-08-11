@@ -1,6 +1,8 @@
 import { ReviewSeverity } from "./review";
 import { TimelineType } from "./timeline";
 
+export type RecordStream = "primary" | "secondary";
+
 export type Recording = {
   id: string;
   camera: string;
@@ -13,6 +15,7 @@ export type Recording = {
   objects: number;
   motion_heatmap?: Record<string, number> | null;
   dBFS: number;
+  stream?: RecordStream;
 };
 
 export type RecordingSegment = {

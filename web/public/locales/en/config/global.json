@@ -691,6 +691,10 @@
       "record": {
         "label": "Record output arguments",
         "description": "Default output arguments for record role streams."
+      },
+      "record_secondary": {
+        "label": "Secondary record output arguments",
+        "description": "Default output arguments for the secondary (continuous) record role stream."
       }
     },
     "retry_interval": {
@@ -1030,6 +1034,34 @@
       "quality": {
         "label": "Preview quality",
         "description": "Preview quality level (very_low, low, medium, high, very_high)."
+      }
+    },
+    "secondary": {
+      "label": "Secondary recording stream",
+      "description": "Settings for a second, continuous recording stream (e.g. low-resolution 24x7 coverage).",
+      "enabled": {
+        "label": "Enable secondary recording",
+        "description": "Enable a second, continuous recording stream (e.g. a low-resolution substream) alongside the primary record stream."
+      },
+      "continuous": {
+        "label": "Secondary continuous retention",
+        "description": "Number of days to retain the secondary stream's recordings regardless of tracked objects or motion.",
+        "days": {
+          "label": "Retention days",
+          "description": "Days to retain recordings."
+        }
+      },
+      "motion": {
+        "label": "Secondary motion retention",
+        "description": "Number of days to retain the secondary stream's recordings triggered by motion regardless of tracked objects.",
+        "days": {
+          "label": "Retention days",
+          "description": "Days to retain recordings."
+        }
+      },
+      "enabled_in_config": {
+        "label": "Original secondary recording state",
+        "description": "Indicates whether secondary recording was enabled in the original static configuration."
       }
     },
     "enabled_in_config": {

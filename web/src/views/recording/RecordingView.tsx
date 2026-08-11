@@ -59,7 +59,9 @@ import {
   ASPECT_WIDE_LAYOUT,
   RecordingSegment,
   RecordingStartingPoint,
+  RecordStream,
 } from "@/types/record";
+import { usePersistence } from "@/hooks/use-persistence";
 import { cn } from "@/lib/utils";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { useTimezone } from "@/hooks/use-date-utils";
@@ -153,6 +155,20 @@ export function RecordingView({
     startTime >= timeRange.after && startTime <= timeRange.before
       ? startTime
       : timeRange.before - 60,
+  );
+
+  // record stream selection (primary/secondary)
+
+  const [persistedRecordStream, setPersistedRecordStream] =
+    usePersistence<RecordStream>(`record-stream-${mainCamera}`, "primary");
+  const recordStream = persistedRecordStream ?? "primary";
+
+  const availableRecordStreams = useMemo<RecordStream[]>(
+    () =>
+      config?.cameras[mainCamera]?.record?.secondary?.enabled
+        ? ["primary", "secondary"]
+        : ["primary"],
+    [config, mainCamera],
   );
 
   const mainCameraReviewItems = useMemo(
@@ -344,6 +360,16 @@ export function RecordingView({
       );
     },
     [currentTime, manuallySetCurrentTime],
+  );
+
+  const onSetRecordStream = useCallback(
+    (newStream: RecordStream) => {
+      // reload the player at the current playhead position on the new
+      // stream's playlist, rather than resetting to the initial position
+      setPlaybackStart(currentTime);
+      setPersistedRecordStream(newStream);
+    },
+    [currentTime, setPersistedRecordStream],
   );
 
   const onShareReviewLink = useCallback(
@@ -929,6 +955,9 @@ export function RecordingView({
                   setFullResolution={setFullResolution}
                   toggleFullscreen={toggleFullscreen}
                   containerRef={mainLayoutRef}
+                  stream={recordStream}
+                  availableStreams={availableRecordStreams}
+                  onSetStream={onSetRecordStream}
                 />
               </div>
               {isDesktop && effectiveCameras.length > 1 && (
@@ -1017,6 +1046,7 @@ export function RecordingView({
             }
             onAnalysisOpen={onAnalysisOpen}
             isPlaying={mainControllerRef?.current?.isPlaying() ?? false}
+            hasSecondaryStream={availableRecordStreams.length > 1}
           />
         </div>
       </div>
@@ -1040,6 +1070,7 @@ type TimelineProps = {
   setScrubbing: React.Dispatch<React.SetStateAction<boolean>>;
   setExportRange: React.Dispatch<React.SetStateAction<TimeRange | undefined>>;
   onAnalysisOpen: (open: boolean) => void;
+  hasSecondaryStream: boolean;
 };
 function Timeline({
   contentRef,
@@ -1057,6 +1088,7 @@ function Timeline({
   setScrubbing,
   setExportRange,
   onAnalysisOpen,
+  hasSecondaryStream,
 }: TimelineProps) {
   const { t } = useTranslation(["views/events"]);
   const internalTimelineRef = useRef<HTMLDivElement>(null);
@@ -1130,6 +1162,26 @@ function Timeline({
       cameras: mainCamera,
     },
   ]);
+
+  // ranges where the primary (high-res) stream has no coverage -- the
+  // inverse tells the timeline which ranges are only available in the
+  // secondary (low-res) stream. Only fetched for cameras with a secondary
+  // stream configured, since the query is otherwise pointless (primary is
+  // the only stream, so this would just duplicate `noRecordings`).
+  const { data: lowResOnlyRanges } = useSWR<RecordingSegment[]>(
+    hasSecondaryStream
+      ? [
+          "recordings/unavailable",
+          {
+            before: alignedBefore,
+            after: alignedAfter,
+            scale: Math.round(zoomSettings.segmentDuration),
+            cameras: mainCamera,
+            stream: "primary",
+          },
+        ]
+      : null,
+  );
 
   // a local mirror of the range fights a reseed: the position effect
   // echoes it back and the two rewrite each other forever
@@ -1228,6 +1280,7 @@ function Timeline({
             events={mainCameraReviewItems}
             motion_events={motionData ?? []}
             noRecordingRanges={noRecordings ?? []}
+            lowResOnlyRanges={hasSecondaryStream ? lowResOnlyRanges : undefined}
             contentRef={contentRef}
             onHandlebarDraggingChange={setScrubbing}
             isZooming={isZooming}

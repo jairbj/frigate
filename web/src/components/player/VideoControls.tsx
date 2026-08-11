@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { FaCompress, FaExpand } from "react-icons/fa";
 import { TbCameraDown } from "react-icons/tb";
 import { useTranslation } from "react-i18next";
+import { RecordStream } from "@/types/record";
 
 type VideoControls = {
   volume?: boolean;
@@ -44,6 +45,7 @@ type VideoControls = {
   plusUpload?: boolean;
   snapshot?: boolean;
   fullscreen?: boolean;
+  recordStream?: boolean;
 };
 
 const CONTROLS_DEFAULT: VideoControls = {
@@ -53,6 +55,7 @@ const CONTROLS_DEFAULT: VideoControls = {
   plusUpload: false,
   snapshot: false,
   fullscreen: false,
+  recordStream: false,
 };
 const PLAYBACK_RATE_DEFAULT = isSafari ? [0.5, 1, 2] : [0.5, 1, 2, 4, 8, 16];
 const MIN_ITEMS_WRAP = 6;
@@ -80,6 +83,9 @@ type VideoControlsProps = {
   snapshotLoading?: boolean;
   toggleFullscreen?: () => void;
   containerRef?: React.MutableRefObject<HTMLDivElement | null>;
+  availableStreams?: RecordStream[];
+  stream?: RecordStream;
+  onSetStream?: (stream: RecordStream) => void;
 };
 export default function VideoControls({
   className,
@@ -104,7 +110,12 @@ export default function VideoControls({
   snapshotLoading = false,
   toggleFullscreen,
   containerRef,
+  availableStreams,
+  stream,
+  onSetStream,
 }: VideoControlsProps) {
+  const { t } = useTranslation("components/player");
+
   // layout
 
   const controlsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -281,6 +292,44 @@ export default function VideoControls({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+      {features.recordStream &&
+        stream &&
+        onSetStream &&
+        availableStreams &&
+        availableStreams.length > 1 && (
+          <DropdownMenu
+            onOpenChange={(open) => {
+              if (setControlsOpen) {
+                setControlsOpen(open);
+              }
+            }}
+          >
+            <DropdownMenuTrigger>
+              {t(`stream.${stream}.short`)}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              portalProps={{
+                container:
+                  containerRef?.current ?? controlsContainerRef.current,
+              }}
+            >
+              <DropdownMenuRadioGroup
+                value={stream}
+                onValueChange={(value) => onSetStream(value as RecordStream)}
+              >
+                {availableStreams.map((s) => (
+                  <DropdownMenuRadioItem
+                    key={s}
+                    className="cursor-pointer"
+                    value={s}
+                  >
+                    {t(`stream.${s}.label`)}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       {features.plusUpload && onUploadFrame && (
         <FrigatePlusUploadButton
           video={video}
