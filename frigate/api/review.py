@@ -576,6 +576,7 @@ def delete_reviews(body: ReviewModifyMultipleBody):
     dependencies=[Depends(allow_any_authenticated())],
 )
 def motion_activity(
+    request: Request,
     params: ReviewActivityMotionQueryParams = Depends(),
     allowed_cameras: list[str] = Depends(get_allowed_cameras_for_filter),
 ):
@@ -602,6 +603,22 @@ def motion_activity(
         camera_list = list(allowed_cameras)
 
     clauses.append(Recordings.camera << camera_list)
+
+    # Each camera's motion timeline follows its own timeline_stream() (the
+    # stream with the broadest continuous coverage), since cameras may mix
+    # short-retention primary with long-retention secondary independently.
+    frigate_config = request.app.frigate_config
+    camera_stream_clauses = [
+        (Recordings.camera == camera)
+        & (
+            Recordings.stream
+            == frigate_config.cameras[camera].record.timeline_stream().value
+        )
+        for camera in camera_list
+        if camera in frigate_config.cameras
+    ]
+    if camera_stream_clauses:
+        clauses.append(reduce(operator.or_, camera_stream_clauses))
 
     data: list[Recordings] = (
         Recordings.select(

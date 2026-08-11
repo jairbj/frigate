@@ -156,15 +156,12 @@ def _validate_export_source(
     start_time: float,
     end_time: float,
     playback_source: PlaybackSourceEnum,
+    stream: RecordStreamEnum = RecordStreamEnum.primary,
 ) -> str | None:
     if playback_source == PlaybackSourceEnum.recordings:
         recordings_count = (
             Recordings.select()
-            .where(
-                camera_range(
-                    camera_name, start_time, end_time, RecordStreamEnum.primary
-                )
-            )
+            .where(camera_range(camera_name, start_time, end_time, stream))
             .count()
         )
 
@@ -205,34 +202,38 @@ def _get_item_recording_export_errors(
     errors: dict[int, str] = {}
 
     # Validate camera configuration first
-    item_ranges_by_camera: dict[str, list[tuple[int, float, float]]] = {}
+    item_ranges_by_camera: dict[
+        str, list[tuple[int, float, float, RecordStreamEnum]]
+    ] = {}
     for index, item in enumerate(items):
         if not configured_cameras.get(item.camera):
             errors[index] = f"{item.camera} is not a valid camera."
             continue
         item_ranges_by_camera.setdefault(item.camera, []).append(
-            (index, item.start_time, item.end_time)
+            (index, item.start_time, item.end_time, item.stream)
         )
 
     if not item_ranges_by_camera:
         return errors
 
-    # For each camera, fetch recordings that cover the union of ranges
+    # For each camera, fetch recordings (both streams) that cover the union
+    # of ranges, then match each item against rows of its own stream.
     for camera_name, indexed_ranges in item_ranges_by_camera.items():
         min_start = min(r[1] for r in indexed_ranges)
         max_end = max(r[2] for r in indexed_ranges)
 
         recording_ranges = list(
-            Recordings.select(Recordings.start_time, Recordings.end_time)
-            .where(
-                camera_range(camera_name, min_start, max_end, RecordStreamEnum.primary)
+            Recordings.select(
+                Recordings.start_time, Recordings.end_time, Recordings.stream
             )
+            .where(camera_range(camera_name, min_start, max_end, None))
             .iterator()
         )
 
-        for index, start_time, end_time in indexed_ranges:
+        for index, start_time, end_time, stream in indexed_ranges:
             has_recording = any(
-                (
+                rec.stream == stream.value
+                and (
                     start_time <= rec.start_time <= end_time
                     or start_time <= rec.end_time <= end_time
                     or (start_time > rec.start_time and end_time < rec.end_time)
@@ -257,6 +258,7 @@ def _build_export_job(
     ffmpeg_output_args: str | None = None,
     cpu_fallback: bool = False,
     chapters: ChaptersEnum | None = None,
+    stream: RecordStreamEnum = RecordStreamEnum.primary,
 ) -> ExportJob:
     return ExportJob(
         id=_generate_export_id(camera_name),
@@ -271,6 +273,7 @@ def _build_export_job(
         ffmpeg_output_args=ffmpeg_output_args,
         cpu_fallback=cpu_fallback,
         chapters=chapters,
+        stream=stream.value,
     )
 
 
@@ -732,6 +735,7 @@ def export_recordings_batch(
             chapters=request.app.frigate_config.cameras[
                 item.camera
             ].record.export.chapters,
+            stream=item.stream,
         )
         try:
             start_export_job(request.app.frigate_config, export_job)
@@ -839,6 +843,7 @@ def export_recording(
         start_time,
         end_time,
         playback_source,
+        body.stream,
     )
     if source_error is not None:
         return JSONResponse(
@@ -855,6 +860,7 @@ def export_recording(
         playback_source,
         export_case_id,
         chapters=chapters,
+        stream=body.stream,
     )
     try:
         start_export_job(request.app.frigate_config, export_job)
@@ -959,6 +965,7 @@ def export_recording_custom(
         start_time,
         end_time,
         playback_source,
+        body.stream,
     )
     if source_error is not None:
         return JSONResponse(
@@ -1006,6 +1013,7 @@ def export_recording_custom(
         ffmpeg_input_args,
         ffmpeg_output_args,
         cpu_fallback,
+        stream=body.stream,
     )
     try:
         start_export_job(request.app.frigate_config, export_job)

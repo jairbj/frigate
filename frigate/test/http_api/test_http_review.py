@@ -622,6 +622,112 @@ class TestHttpReview(BaseTestHttp):
                 response_json[1],
             )
 
+    def _make_dual_stream_review_app(self):
+        """Build an app for front_door where secondary has the longer
+        continuous retention, so record.timeline_stream() == secondary.
+        """
+        dual_stream_config = dict(self.minimal_config)
+        dual_stream_config["cameras"] = {
+            "front_door": {
+                "ffmpeg": {
+                    "inputs": [
+                        {
+                            "path": "rtsp://10.0.0.1:554/main",
+                            "roles": ["record"],
+                        },
+                        {
+                            "path": "rtsp://10.0.0.1:554/sub",
+                            "roles": ["detect", "record_secondary"],
+                        },
+                    ]
+                },
+                "detect": {"height": 1080, "width": 1920, "fps": 5},
+                "record": {
+                    "enabled": True,
+                    "continuous": {"days": 1},
+                    "secondary": {
+                        "enabled": True,
+                        "continuous": {"days": 30},
+                    },
+                },
+            }
+        }
+        self.minimal_config = dual_stream_config
+        app = super().create_app()
+
+        async def mock_get_current_user(request: Request):
+            username = request.headers.get("remote-user")
+            role = request.headers.get("remote-role")
+            if not username or not role:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(
+                    content={"message": "No authorization headers."}, status_code=401
+                )
+            return {"username": username, "role": role}
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+
+        async def mock_get_allowed_cameras_for_filter(request: Request):
+            return ["front_door"]
+
+        app.dependency_overrides[get_allowed_cameras_for_filter] = (
+            mock_get_allowed_cameras_for_filter
+        )
+        return app
+
+    def test_review_activity_motion_ignores_non_timeline_stream(self):
+        """A camera whose timeline_stream() is secondary must not surface
+        motion from primary-only recordings in the same window.
+        """
+        app = self._make_dual_stream_review_app()
+        now = int(datetime.now().timestamp())
+        with AuthTestClient(app) as client:
+            Recordings.insert(
+                id="primary-rec",
+                path="/tmp/primary-rec.mp4",
+                camera="front_door",
+                start_time=now + 1,
+                end_time=now + 2,
+                duration=1,
+                motion=999,
+                stream="primary",
+            ).execute()
+
+            response = client.get(
+                "/review/activity/motion",
+                params={"after": now, "before": now + 3, "scale": 1},
+            )
+            assert response.status_code == 200
+            assert response.json() == []
+
+    def test_review_activity_motion_uses_camera_timeline_stream(self):
+        """The same camera must surface motion from recordings on its
+        timeline_stream() (secondary, per the config above).
+        """
+        app = self._make_dual_stream_review_app()
+        now = int(datetime.now().timestamp())
+        with AuthTestClient(app) as client:
+            Recordings.insert(
+                id="secondary-rec",
+                path="/tmp/secondary-rec.mp4",
+                camera="front_door",
+                start_time=now + 1,
+                end_time=now + 2,
+                duration=1,
+                motion=42,
+                stream="secondary",
+            ).execute()
+
+            response = client.get(
+                "/review/activity/motion",
+                params={"after": now, "before": now + 3, "scale": 1},
+            )
+            assert response.status_code == 200
+            response_json = response.json()
+            assert len(response_json) == 1
+            assert response_json[0]["camera"] == "front_door"
+
     ####################################################################################################################
     ###################################  GET /review/event/{event_id} Endpoint   #######################################
     ####################################################################################################################

@@ -440,6 +440,71 @@ class TestHttpMedia(BaseTestHttp):
             assert response.status_code == 200
             assert response.json() == [{"start_time": 1010, "end_time": 1030}]
 
+    def test_recordings_unavailable_stream_param_filters_to_one_stream(self):
+        """Without `stream`, availability is the union of all streams
+        (preserving existing behavior). With `stream` set, only that
+        stream's rows count towards availability.
+        """
+        with AuthTestClient(self.app) as client:
+            # secondary covers the whole range; primary has a 20s gap.
+            Recordings.insert(
+                id="sec_full",
+                path="/media/recordings/sec_full.mp4",
+                camera="front_door",
+                start_time=1000,
+                end_time=1040,
+                duration=40,
+                motion=0,
+                stream="secondary",
+            ).execute()
+            Recordings.insert(
+                id="prim_a",
+                path="/media/recordings/prim_a.mp4",
+                camera="front_door",
+                start_time=1000,
+                end_time=1010,
+                duration=10,
+                motion=0,
+                stream="primary",
+            ).execute()
+            Recordings.insert(
+                id="prim_b",
+                path="/media/recordings/prim_b.mp4",
+                camera="front_door",
+                start_time=1030,
+                end_time=1040,
+                duration=10,
+                motion=0,
+                stream="primary",
+            ).execute()
+
+            # default: union of both streams covers the whole range -> no gap
+            response = client.get(
+                "/recordings/unavailable",
+                params={
+                    "after": 1000,
+                    "before": 1040,
+                    "scale": 5,
+                    "cameras": "front_door",
+                },
+            )
+            assert response.status_code == 200
+            assert response.json() == []
+
+            # stream=primary: only primary rows count -> the gap reappears
+            response = client.get(
+                "/recordings/unavailable",
+                params={
+                    "after": 1000,
+                    "before": 1040,
+                    "scale": 5,
+                    "cameras": "front_door",
+                    "stream": "primary",
+                },
+            )
+            assert response.status_code == 200
+            assert response.json() == [{"start_time": 1010, "end_time": 1030}]
+
     def test_recordings_unavailable_merges_overlapping_recordings(self):
         """Overlapping recordings are merged so no false gap is reported."""
         with AuthTestClient(self.app) as client:
@@ -527,3 +592,48 @@ class TestHttpMedia(BaseTestHttp):
 
             assert response.status_code == 200
             assert response.json() == [{"start_time": 1010, "end_time": 1030}]
+
+    def test_camera_recordings_stream_param_defaults_to_primary(self):
+        """GET /{camera}/recordings defaults to the primary stream and
+        must not leak rows from the secondary stream, or vice versa.
+        """
+        with AuthTestClient(self.app) as client:
+            Recordings.insert(
+                id="prim_rec",
+                path="/media/recordings/prim_rec.mp4",
+                camera="front_door",
+                start_time=1000,
+                end_time=1010,
+                duration=10,
+                motion=0,
+                objects=0,
+                stream="primary",
+            ).execute()
+            Recordings.insert(
+                id="sec_rec",
+                path="/media/recordings/sec_rec.mp4",
+                camera="front_door",
+                start_time=1000,
+                end_time=1010,
+                duration=10,
+                motion=0,
+                objects=0,
+                stream="secondary",
+            ).execute()
+
+            response = client.get(
+                "/front_door/recordings", params={"after": 1000, "before": 1010}
+            )
+            assert response.status_code == 200
+            rows = response.json()
+            assert [r["id"] for r in rows] == ["prim_rec"]
+            assert rows[0]["stream"] == "primary"
+
+            response = client.get(
+                "/front_door/recordings",
+                params={"after": 1000, "before": 1010, "stream": "secondary"},
+            )
+            assert response.status_code == 200
+            rows = response.json()
+            assert [r["id"] for r in rows] == ["sec_rec"]
+            assert rows[0]["stream"] == "secondary"

@@ -122,15 +122,17 @@ def all_recordings_summary(
 @router.get(
     "/{camera_name}/recordings/summary", dependencies=[Depends(require_camera_access)]
 )
-async def recordings_summary(camera_name: str, timezone: str = "utc"):
+async def recordings_summary(request: Request, camera_name: str, timezone: str = "utc"):
     """Returns hourly summary for recordings of given camera"""
+
+    stream = request.app.frigate_config.cameras[camera_name].record.timeline_stream()
 
     time_range_query = (
         Recordings.select(
             fn.MIN(Recordings.start_time).alias("min_time"),
             fn.MAX(Recordings.start_time).alias("max_time"),
         )
-        .where(Recordings.camera == camera_name)
+        .where(Recordings.camera == camera_name, Recordings.stream == stream.value)
         .dicts()
         .get()
     )
@@ -168,6 +170,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
             )
             .where(
                 (Recordings.camera == camera_name)
+                & (Recordings.stream == stream.value)
                 & (Recordings.end_time >= period_start)
                 & (Recordings.start_time <= period_end)
             )
@@ -230,6 +233,7 @@ async def recordings(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
     before: float = datetime.now().timestamp(),
+    stream: RecordStreamEnum = RecordStreamEnum.primary,
 ):
     """Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used"""
     recordings = (
@@ -242,8 +246,9 @@ async def recordings(
             Recordings.objects,
             Recordings.motion_heatmap,
             Recordings.duration,
+            Recordings.stream,
         )
-        .where(camera_range(camera_name, after, before, RecordStreamEnum.primary))
+        .where(camera_range(camera_name, after, before, stream))
         .order_by(Recordings.start_time)
         .dicts()
         .iterator()
@@ -284,6 +289,9 @@ async def no_recordings(
         (Recordings.end_time >= after) & (Recordings.start_time <= before),
         (Recordings.camera << camera_list),
     ]
+
+    if params.stream is not None:
+        clauses.append(Recordings.stream == params.stream.value)
 
     # Get recording start times
     data: list[Recordings] = (

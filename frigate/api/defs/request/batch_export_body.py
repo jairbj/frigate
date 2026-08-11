@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 
+from frigate.record.types import RecordStreamEnum
+
 MAX_BATCH_EXPORT_ITEMS = 50
 
 
@@ -7,6 +9,11 @@ class BatchExportItem(BaseModel):
     camera: str = Field(title="Camera name")
     start_time: float = Field(title="Start time")
     end_time: float = Field(title="End time")
+    stream: RecordStreamEnum = Field(
+        default=RecordStreamEnum.primary,
+        title="Recording stream",
+        description="Which recording stream (primary/secondary) to export from.",
+    )
     image_path: str | None = Field(
         default=None,
         title="Existing thumbnail path",
