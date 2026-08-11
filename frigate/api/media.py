@@ -548,10 +548,12 @@ async def vod_ts(
     start_ts: float,
     end_ts: float,
     force_discontinuity: bool = False,
+    stream: RecordStreamEnum = RecordStreamEnum.primary,
 ):
     logger.debug(
-        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s",
+        "VOD: Generating VOD for %s (%s) from %s to %s with force_discontinuity=%s",
         camera_name,
+        stream.value,
         start_ts,
         end_ts,
         force_discontinuity,
@@ -563,7 +565,7 @@ async def vod_ts(
             Recordings.end_time,
             Recordings.start_time,
         )
-        .where(camera_range(camera_name, start_ts, end_ts, RecordStreamEnum.primary))
+        .where(camera_range(camera_name, start_ts, end_ts, stream))
         .order_by(Recordings.start_time.asc())
         .iterator()
     )
@@ -676,6 +678,21 @@ async def vod_ts(
 
 
 @router.get(
+    "/vod/{camera_name}/stream/{stream}/start/{start_ts}/end/{end_ts}",
+    dependencies=[Depends(require_camera_access)],
+    description="Returns an HLS playlist for the specified timestamp-range and stream (primary or secondary) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
+)
+async def vod_ts_stream(
+    camera_name: str,
+    stream: RecordStreamEnum,
+    start_ts: float,
+    end_ts: float,
+    force_discontinuity: bool = False,
+):
+    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity, stream)
+
+
+@router.get(
     "/vod/{year_month}/{day}/{hour}/{camera_name}",
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified date-time on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
@@ -761,6 +778,22 @@ async def vod_clip(
     end_ts: float,
 ):
     return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
+
+
+@router.get(
+    "/vod/clip/{camera_name}/stream/{stream}/start/{start_ts}/end/{end_ts}",
+    dependencies=[Depends(require_camera_access)],
+    description="Returns an HLS playlist for a timestamp range and stream (primary or secondary) with HLS discontinuity enabled. Append /master.m3u8 or /index.m3u8 for HLS playback.",
+)
+async def vod_clip_stream(
+    camera_name: str,
+    stream: RecordStreamEnum,
+    start_ts: float,
+    end_ts: float,
+):
+    return await vod_ts(
+        camera_name, start_ts, end_ts, force_discontinuity=True, stream=stream
+    )
 
 
 @router.get(

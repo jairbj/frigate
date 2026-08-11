@@ -223,6 +223,7 @@ class RecordingExporter(threading.Thread):
         cpu_fallback: bool = False,
         chapters: ChaptersEnum | None = None,
         on_progress: Callable[[str, float], None] | None = None,
+        stream: RecordStreamEnum = RecordStreamEnum.primary,
     ) -> None:
         super().__init__()
         self.config = config
@@ -234,6 +235,7 @@ class RecordingExporter(threading.Thread):
         self.end_time = end_time
         self.playback_source = playback_source
         self.export_case_id = export_case_id
+        self.stream = stream
         self.ffmpeg_input_args = ffmpeg_input_args
         self.ffmpeg_output_args = ffmpeg_output_args
         self.cpu_fallback = cpu_fallback
@@ -303,7 +305,7 @@ class RecordingExporter(threading.Thread):
                             self.camera,
                             self.start_time,
                             self.end_time,
-                            RecordStreamEnum.primary,
+                            self.stream,
                         )
                     )
                     .iterator()
@@ -703,16 +705,22 @@ class RecordingExporter(threading.Thread):
                     self.camera,
                     self.start_time,
                     self.end_time,
-                    RecordStreamEnum.primary,
+                    self.stream,
                 )
             )
             .order_by(Recordings.start_time.asc())
             .iterator()
         )
 
+        vod_base = (
+            f"/vod/{self.camera}/start"
+            if self.stream == RecordStreamEnum.primary
+            else f"/vod/{self.camera}/stream/{self.stream.value}/start"
+        )
+
         playlist_lines: list[str] = []
         if (self.end_time - self.start_time) <= MAX_PLAYLIST_SECONDS:
-            playlist_url = f"http://127.0.0.1:{internal_port}/vod/{self.camera}/start/{self.start_time}/end/{self.end_time}/index.m3u8"
+            playlist_url = f"http://127.0.0.1:{internal_port}{vod_base}/{self.start_time}/end/{self.end_time}/index.m3u8"
             ffmpeg_input = (
                 f"-y -protocol_whitelist pipe,file,http,tcp -i {playlist_url}"
             )
@@ -723,7 +731,7 @@ class RecordingExporter(threading.Thread):
             for i in range(0, len(recordings), page_size):
                 chunk = recordings[i : i + page_size]
                 playlist_lines.append(
-                    f"file 'http://127.0.0.1:{internal_port}/vod/{self.camera}/start/{float(chunk[0].start_time)}/end/{float(chunk[-1].end_time)}/index.m3u8'"
+                    f"file 'http://127.0.0.1:{internal_port}{vod_base}/{float(chunk[0].start_time)}/end/{float(chunk[-1].end_time)}/index.m3u8'"
                 )
 
             ffmpeg_input = "-y -protocol_whitelist pipe,file,http,tcp -f concat -safe 0 -i /dev/stdin"
@@ -777,7 +785,7 @@ class RecordingExporter(threading.Thread):
                 "-metadata",
                 f"creation_time={creation_time}",
                 "-metadata",
-                f"comment=Camera: {self.camera}",
+                f"comment=Camera: {self.camera}, Stream: {self.stream.value}",
             ]
         )
 

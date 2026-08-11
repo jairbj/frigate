@@ -19,6 +19,7 @@ from frigate.const import UPDATE_JOB_STATE
 from frigate.jobs.job import Job
 from frigate.models import Export
 from frigate.record.export import PlaybackSourceEnum, RecordingExporter
+from frigate.record.types import RecordStreamEnum
 from frigate.types import JobStatusTypesEnum
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class ExportJob(Job):
     ffmpeg_output_args: str | None = None
     cpu_fallback: bool = False
     chapters: ChaptersEnum | None = None
+    stream: str = RecordStreamEnum.primary.value
     current_step: str = "queued"
     progress_percent: float = 0.0
 
@@ -348,6 +350,7 @@ class ExportJobManager:
             job.cpu_fallback,
             job.chapters,
             on_progress=self._make_progress_callback(job),
+            stream=RecordStreamEnum(job.stream),
         )
 
         try:

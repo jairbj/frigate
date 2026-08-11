@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from pydantic.json_schema import SkipJsonSchema
 
+from frigate.record.types import RecordStreamEnum
+
 
 class MediaRecordingsSummaryQueryParams(BaseModel):
     timezone: str = "utc"
@@ -12,6 +14,7 @@ class MediaRecordingsAvailabilityQueryParams(BaseModel):
     before: float | SkipJsonSchema[None] = None
     after: float | SkipJsonSchema[None] = None
     scale: int = 30
+    stream: RecordStreamEnum | SkipJsonSchema[None] = None
 
 
 class RecordingsDeleteQueryParams(BaseModel):

@@ -5,6 +5,7 @@ from frigate.record.export import (
     ChaptersEnum,
     PlaybackSourceEnum,
 )
+from frigate.record.types import RecordStreamEnum
 
 
 class ExportRecordingsBody(BaseModel):
@@ -27,6 +28,11 @@ class ExportRecordingsBody(BaseModel):
             "the camera's configured export chapter mode is used."
         ),
     )
+    stream: RecordStreamEnum = Field(
+        default=RecordStreamEnum.primary,
+        title="Recording stream",
+        description="Which recording stream (primary/secondary) to export from.",
+    )
 
 
 class ExportRecordingsCustomBody(BaseModel):
@@ -40,6 +46,11 @@ class ExportRecordingsCustomBody(BaseModel):
         title="Export case ID",
         max_length=30,
         description="ID of the export case to assign this export to",
+    )
+    stream: RecordStreamEnum = Field(
+        default=RecordStreamEnum.primary,
+        title="Recording stream",
+        description="Which recording stream (primary/secondary) to export from.",
     )
     ffmpeg_input_args: str | None = Field(
         default=None,

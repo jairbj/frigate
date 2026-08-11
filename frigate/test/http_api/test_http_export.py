@@ -39,6 +39,7 @@ class TestHttpExport(BaseTestHttp):
         camera: str,
         start_time: float,
         end_time: float,
+        stream: str = "primary",
     ) -> None:
         Recordings.create(
             id=recording_id,
@@ -53,6 +54,7 @@ class TestHttpExport(BaseTestHttp):
             segment_size=1,
             regions=0,
             motion_heatmap=[],
+            stream=stream,
         )
 
     def test_create_export_case_uses_wall_clock_time(self):
@@ -792,6 +794,86 @@ class TestHttpExport(BaseTestHttp):
         assert (
             ExportCase.get(ExportCase.id == response_json["export_case_id"]) is not None
         )
+
+    def test_batch_export_stream_field_scopes_recording_match(self):
+        """An item's `stream` must be matched against recordings of that
+        same stream only -- a secondary-only recording must not satisfy an
+        item that (implicitly, via the default) requests primary, and vice
+        versa.
+        """
+        self._insert_recording(
+            "rec-front-secondary", "front_door", 100, 200, "secondary"
+        )
+
+        with patch(
+            "frigate.api.export.start_export_job",
+            side_effect=lambda _config, job: job.id,
+        ) as start_export_job:
+            with AuthTestClient(self.app) as client:
+                response = client.post(
+                    "/exports/batch",
+                    json={
+                        "items": [
+                            {
+                                "camera": "front_door",
+                                "start_time": 110,
+                                "end_time": 150,
+                            },
+                            {
+                                "camera": "front_door",
+                                "start_time": 110,
+                                "end_time": 150,
+                                "stream": "secondary",
+                            },
+                        ],
+                        "new_case_name": "StreamScoped",
+                    },
+                )
+
+        assert response.status_code == 202
+        response_json = response.json()
+        results = response_json["results"]
+        # index 0 (default stream=primary) finds no matching recording
+        assert results[0]["success"] is False
+        assert results[0]["error"] == "No recordings found for time range"
+        # index 1 (stream=secondary) matches the secondary-only recording
+        assert results[1]["success"] is True
+        start_export_job.assert_called_once()
+
+    def test_single_export_stream_field_defaults_to_primary(self):
+        """A single export with no stream field only matches primary
+        recordings; a secondary-only recording must be rejected."""
+        self._insert_recording(
+            "rec-front-secondary", "front_door", 100, 200, "secondary"
+        )
+
+        with AuthTestClient(self.app) as client:
+            response = client.post(
+                "/export/front_door/start/110/end/150",
+                json={"name": "Should not match"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["success"] is False
+        assert response.json()["message"] == "No recordings found for time range"
+
+    def test_single_export_stream_field_matches_secondary(self):
+        self._insert_recording(
+            "rec-front-secondary", "front_door", 100, 200, "secondary"
+        )
+
+        with patch(
+            "frigate.api.export.start_export_job",
+            side_effect=lambda _config, job: job.id,
+        ):
+            with AuthTestClient(self.app) as client:
+                response = client.post(
+                    "/export/front_door/start/110/end/150",
+                    json={"name": "Should match", "stream": "secondary"},
+                )
+
+        assert response.status_code == 202
+        assert response.json()["success"] is True
 
     def test_batch_export_same_camera_different_ranges_one_missing(self):
         # Recording covers 100-200 only. First item fits, second does not.
