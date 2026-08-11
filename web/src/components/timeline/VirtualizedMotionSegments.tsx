@@ -25,6 +25,7 @@ type VirtualizedMotionSegmentsProps = {
   motionOnly: boolean;
   getMotionSegmentValue: (timestamp: number) => number;
   getRecordingAvailability: (timestamp: number) => boolean | undefined;
+  getLowResOnly?: (timestamp: number) => boolean;
   alwaysShowMotionLine: boolean;
 };
 
@@ -58,6 +59,7 @@ export const VirtualizedMotionSegments = forwardRef<
       motionOnly,
       getMotionSegmentValue,
       getRecordingAvailability,
+      getLowResOnly,
       alwaysShowMotionLine,
     },
     ref,
@@ -161,6 +163,7 @@ export const VirtualizedMotionSegments = forwardRef<
         );
 
         const hasRecording = getRecordingAvailability(segmentTime);
+        const isLowResOnly = getLowResOnly?.(segmentTime) ?? false;
 
         // Check if previous and next segments have recordings
         // This is important because in motionOnly mode, the segments array is filtered
@@ -197,6 +200,7 @@ export const VirtualizedMotionSegments = forwardRef<
               hasRecording={hasRecording}
               prevIsNoRecording={prevIsNoRecording}
               nextIsNoRecording={nextIsNoRecording}
+              isLowResOnly={isLowResOnly}
               segmentDuration={segmentDuration}
               segmentTime={segmentTime}
               timestampSpread={timestampSpread}
@@ -216,6 +220,7 @@ export const VirtualizedMotionSegments = forwardRef<
         events,
         getMotionSegmentValue,
         getRecordingAvailability,
+        getLowResOnly,
         motionOnly,
         segmentDuration,
         showMinimap,

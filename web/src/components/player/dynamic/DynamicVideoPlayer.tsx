@@ -9,7 +9,7 @@ import {
 import { useApiHost } from "@/api";
 import useSWR from "swr";
 import { FrigateConfig } from "@/types/frigateConfig";
-import { Recording } from "@/types/record";
+import { Recording, RecordStream } from "@/types/record";
 import { Preview } from "@/types/preview";
 import PreviewPlayer, { PreviewController } from "../PreviewPlayer";
 import { DynamicVideoController } from "./DynamicVideoController";
@@ -55,6 +55,9 @@ type DynamicVideoPlayerProps = {
   toggleFullscreen: () => void;
   containerRef?: React.MutableRefObject<HTMLDivElement | null>;
   transformedOverlay?: ReactNode;
+  stream?: RecordStream;
+  availableStreams?: RecordStream[];
+  onSetStream?: (stream: RecordStream) => void;
 };
 export default function DynamicVideoPlayer({
   className,
@@ -75,6 +78,9 @@ export default function DynamicVideoPlayer({
   toggleFullscreen,
   containerRef,
   transformedOverlay,
+  stream = "primary",
+  availableStreams,
+  onSetStream,
 }: DynamicVideoPlayerProps) {
   const { t } = useTranslation(["components/player", "views/live"]);
   const apiHost = useApiHost();
@@ -238,8 +244,9 @@ export default function DynamicVideoPlayer({
     () => ({
       before: timeRange.before,
       after: timeRange.after,
+      stream,
     }),
-    [timeRange],
+    [timeRange, stream],
   );
   const { data: recordings } = useSWR<Recording[]>(
     [`${camera}/recordings`, recordingParams],
@@ -270,8 +277,13 @@ export default function DynamicVideoPlayer({
       );
     }
 
+    const vodPath =
+      stream === "primary"
+        ? `${camera}/start/${recordingParams.after}/end/${recordingParams.before}`
+        : `${camera}/stream/${stream}/start/${recordingParams.after}/end/${recordingParams.before}`;
+
     setSource({
-      playlist: `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}/master.m3u8`,
+      playlist: `${apiHost}vod/${vodPath}/master.m3u8`,
       startPosition,
     });
 
@@ -376,6 +388,9 @@ export default function DynamicVideoPlayer({
           camera={contextCamera || camera}
           currentTimeOverride={currentTime}
           transformedOverlay={transformedOverlay}
+          availableStreams={availableStreams}
+          stream={stream}
+          onSetStream={onSetStream}
         />
       )}
       <PreviewPlayer

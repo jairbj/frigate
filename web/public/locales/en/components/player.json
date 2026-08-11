@@ -48,5 +48,17 @@
     "error": {
       "submitFrigatePlusFailed": "Failed to submit frame to Frigate+"
     }
+  },
+  "stream": {
+    "label": "Stream",
+    "primary": {
+      "label": "High resolution",
+      "short": "HD"
+    },
+    "secondary": {
+      "label": "Continuous (low resolution)",
+      "short": "SD"
+    },
+    "lowResOnly": "Only available in low resolution"
   }
 }

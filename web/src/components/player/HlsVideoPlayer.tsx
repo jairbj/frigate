@@ -18,7 +18,11 @@ import { toast } from "sonner";
 import { useOverlayState } from "@/hooks/use-overlay-state";
 import { useUserPersistence } from "@/hooks/use-user-persistence";
 import { cn } from "@/lib/utils";
-import { ASPECT_VERTICAL_LAYOUT, RecordingPlayerError } from "@/types/record";
+import {
+  ASPECT_VERTICAL_LAYOUT,
+  RecordingPlayerError,
+  RecordStream,
+} from "@/types/record";
 import { useTranslation } from "react-i18next";
 import ObjectTrackOverlay from "@/components/overlay/ObjectTrackOverlay";
 import { useIsAdmin } from "@/hooks/use-is-admin";
@@ -62,6 +66,9 @@ type HlsVideoPlayerProps = {
   camera?: string;
   currentTimeOverride?: number;
   transformedOverlay?: ReactNode;
+  availableStreams?: RecordStream[];
+  stream?: RecordStream;
+  onSetStream?: (stream: RecordStream) => void;
 };
 
 export default function HlsVideoPlayer({
@@ -90,6 +97,9 @@ export default function HlsVideoPlayer({
   camera,
   currentTimeOverride,
   transformedOverlay,
+  availableStreams,
+  stream,
+  onSetStream,
 }: HlsVideoPlayerProps) {
   const { t } = useTranslation("components/player");
   const { data: config } = useSWR<FrigateConfig>("config");
@@ -332,7 +342,11 @@ export default function HlsVideoPlayer({
             plusUpload: isAdmin && config?.plus?.enabled == true,
             snapshot: !!onSnapshot,
             fullscreen: supportsFullscreen,
+            recordStream: !!onSetStream,
           }}
+          availableStreams={availableStreams}
+          stream={stream}
+          onSetStream={onSetStream}
           setControlsOpen={setControlsOpen}
           setMuted={onSetMuted}
           playbackRate={playbackRate ?? 1}
