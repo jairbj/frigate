@@ -304,7 +304,7 @@ Topic with current state of notifications. Published values are `ON` and `OFF`.
 
 ### `frigate/<camera_name>/status/<role>`
 
-Publishes the current health status of each role that is enabled (`audio`, `detect`, `record`). Possible values are:
+Publishes the current health status of each role that is enabled (`audio`, `detect`, `record`, `record_secondary`). `record_secondary` is only published for cameras with a [secondary recording stream](/configuration/record#recording-a-secondary-continuous-low-resolution-stream) configured, and is tracked independently of `record` -- a healthy primary stream does not mask a stalled or offline secondary stream. Possible values are:
 
 - `online`: Stream is running and being processed
 - `offline`: Stream is offline and is being restarted
