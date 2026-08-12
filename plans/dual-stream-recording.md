@@ -713,6 +713,25 @@ Dois pontos sobre `overlaps`:
 | 24 | `util/camera_cleanup.py:52` | **todos** (inalterado) | nenhum |
 | 25 | `jobs/motion_search.py:470` | **selecionado, default primary** | 🟠 MÉDIO — cada timestamp decodificado duas vezes; 2× runtime e hits duplicados |
 | 26 | `jobs/debug_replay.py:102` `query_recordings` | **primary** | 🟠 MÉDIO — replaya frames de baixa res num pipeline dimensionado para o main |
+| 27 | `data_processing/post/license_plate.py:100` LPR pós-processamento | **primary** | 🔴 **ALTO** — lookup pontual com `order_by(start_time.desc()).limit(1)`: com dois streams cobrindo o mesmo instante ele pega o que começou por último, ou seja escolha **não determinística** entre HD e SD. OCR de placa lido do substream de baixa resolução. Silencioso. |
+| 28 | `data_processing/post/review_descriptions.py:435` frames p/ o VLM | **primary** | 🟠 MÉDIO — mesmo padrão da linha 27; alimenta o modelo de visão com frames de baixa resolução de forma não determinística |
+
+> ⚠️ **As linhas 27 e 28 foram acrescentadas numa revisão posterior** — a tabela original
+> parava em 26 e não as continha. Isso importa para o risco #4 do §12: a mitigação alegada
+> lá ("`camera_range(..., stream)` sem default obriga cada call site a ser uma decisão
+> consciente") só protege sites que já foram **migrados para o helper**. Esses dois nunca
+> usaram `camera_range`, então a mitigação era estruturalmente cega exatamente para o modo
+> de falha que ela diz prevenir. A lição: esta tabela é um inventário montado à mão, não
+> uma garantia. Ao adicionar qualquer consumidor novo de `Recordings`, refaça a varredura
+> (`grep -rn "Recordings\.select" --include=*.py`) em vez de confiar nesta lista.
+
+**Divergências conhecidas entre esta tabela e o código entregue:** as linhas 1
+(`get_snapshot_from_recording`), 3 (`recording_clip`) e 25 (`motion_search`) foram
+especificadas como "selecionado" mas foram implementadas com `primary` fixo. Não é
+perigoso — primary é o default seguro e a corrupção por segmentos duplicados que a tabela
+temia não ocorre — mas o `?stream=` e, no caso da linha 1, o fallback para o outro stream
+quando não há linha (que faria thumbnails continuarem funcionando depois que a retenção do
+primary expira) continuam pendentes.
 
 **Correção à análise da linha 12** (`/review/activity/motion`, `api/review.py:613`):
 verificado no código — o resample usa `.max()`, **não** `.sum()`
@@ -958,9 +977,9 @@ seja identificável depois.
 
 ```
 RecordingView.tsx
-  useState<RecordStream>("primary")            ──┐
-  (persistir por câmera com usePersistence:      │
-   "record-stream-{camera}")                     │ stream, onStreamChange
+  usePersistence<RecordStream>("record-stream-{camera}")  ──┐
+  default (sem escolha salva) = espelho de                  │
+  RecordConfig.timeline_stream(), NÃO "primary"             │ stream, onStreamChange
                                                  ▼
 DynamicVideoPlayer.tsx
   recordingParams memo → SWR key [`${camera}/recordings`, {after, before, stream}]
@@ -972,6 +991,28 @@ HlsVideoPlayer.tsx   (pass-through puro)
                                                  ▼
 VideoControls.tsx    features.recordStream → DropdownMenu/RadioGroup
 ```
+
+🔴 **O stream inicial não pode ser `"primary"` fixo.** No YAML alvo do §1.6 o primary tem
+`continuous.days: 0`, então abrir o player nele mostra "No recordings found for this time"
+na maior parte da faixa — enquanto a timeline ao lado, que já segue `timeline_stream()`
+(§6.2 linha 7 e linha 12), exibe cobertura 24x7. Player e timeline discordariam por
+construção, na exata configuração que o plano recomenda adotar. O default sem escolha
+salva tem que replicar `RecordConfig.timeline_stream()` no frontend:
+
+```ts
+const defaultRecordStream = useMemo<RecordStream>(() => {
+  const rec = config?.cameras[mainCamera]?.record;
+  if (!rec?.secondary?.enabled) return "primary";
+  return (rec.secondary.continuous?.days ?? 0) >= (rec.continuous?.days ?? 0)
+    ? "secondary"
+    : "primary";
+}, [config, mainCamera]);
+```
+
+Isso exige que `continuous` e `motion` existam no tipo `record` de
+`web/src/types/frigateConfig.ts` — o tipo declarava só `retain`, então os dois precisam ser
+acrescentados. Usar o flag `loaded` do `usePersistence` para não carregar a playlist de um
+stream e trocar para o outro assim que a escolha salva chega do IndexedDB.
 
 Detalhe crítico em `DynamicVideoPlayer.tsx`: `stream` tem que entrar no **memo
 `recordingParams`** (linhas 234-241), não só no template da URL. Esse memo é a chave do SWR
@@ -1117,12 +1158,27 @@ Convenção do repo: `python3 -u -m unittest frigate.test.<module>`.
 - `calculate_camera_bandwidth` com mistura 50/50 de segmentos de 1 MB e 10 MB retorna a
   *soma* das taxas por stream, não a média misturada.
 
-**Adições a `frigate/test/test_camera_maintainer.py`**
-- desempacotamento do payload de 4 elementos.
+**Novo `frigate/test/test_camera_watchdog.py`**
+
+> ⚠️ Correção: uma versão anterior deste plano mandava colocar estes testes em
+> `frigate/test/test_camera_maintainer.py`. Arquivo errado — aquele testa `CameraMaintainer`
+> (limpeza de SHM), classe sem relação com o `CameraWatchdog` de `frigate/video/ffmpeg.py`.
+> Como não existia nenhum arquivo de teste para o `CameraWatchdog`, o erro fez com que estes
+> testes simplesmente não fossem escritos na P2, deixando sem cobertura justamente o
+> mecanismo que detecta um stream 24x7 morto — o "ganho principal" do §3.2.
+
+- 🔴 **um primary saudável não pode mascarar um secondary parado**: `_stream_staleness`
+  julga cada stream pelos seus próprios timestamps. **É o teste de maior valor deste
+  arquivo** — falha numa implementação com escalar compartilhado.
+- o caso espelhado (primary parado não condena um secondary saudável), para provar
+  isolamento nas duas direções.
+- o grace period de 90s cobre os dois streams.
 - um secondary parado com primary saudável reinicia exatamente o processo secundário
-  (afirmar `start_or_restart_ffmpeg` chamado uma vez, com o cmd do secundário).
+  (afirmar `start_or_restart_ffmpeg` chamado uma vez, com o cmd do secundário), dirigindo
+  uma iteração de `run()` via `stop_event.wait.side_effect = [False, True]`.
 - `{camera}/status/record` continua `online` enquanto `{camera}/status/record_secondary` vai
-  para `offline`.
+  para `offline`; e o cache de status é por stream (um escalar compartilhado engoliria o
+  primeiro publish do segundo stream).
 
 **`frigate/test/http_api/`**
 - `/vod/{cam}/stream/secondary/start/A/end/B` retorna só paths secondary; a legada

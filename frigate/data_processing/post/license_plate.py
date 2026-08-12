@@ -21,6 +21,8 @@ from frigate.data_processing.common.license_plate.model import (
 )
 from frigate.data_processing.types import PostProcessDataEnum
 from frigate.models import Recordings
+from frigate.record.queries import camera_at_time
+from frigate.record.types import RecordStreamEnum
 from frigate.util.image import get_image_from_recording
 
 from ..types import DataProcessorMetrics
@@ -96,16 +98,17 @@ class LicensePlatePostProcessor(LicensePlateProcessingMixin, PostProcessorApi): 
             logger.error("No data type passed to LPR postprocessing")
             return
 
+        # Pinned to the primary stream: plate OCR is the most resolution
+        # sensitive consumer in the pipeline, and without this filter the
+        # desc()/limit(1) below would pick whichever stream's covering
+        # segment happened to start later -- silently reading plates off
+        # the low-resolution secondary stream roughly half the time.
         recording_query = (
             Recordings.select(
                 Recordings.path,
                 Recordings.start_time,
             )
-            .where(
-                (frame_time >= Recordings.start_time)
-                & (frame_time <= Recordings.end_time)
-            )
-            .where(Recordings.camera == camera_name)
+            .where(camera_at_time(camera_name, frame_time, RecordStreamEnum.primary))
             .order_by(Recordings.start_time.desc())
             .limit(1)
         )
