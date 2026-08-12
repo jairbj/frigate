@@ -159,10 +159,6 @@ export function RecordingView({
 
   // record stream selection (primary/secondary)
 
-  const [persistedRecordStream, setPersistedRecordStream] =
-    usePersistence<RecordStream>(`record-stream-${mainCamera}`, "primary");
-  const recordStream = persistedRecordStream ?? "primary";
-
   const availableRecordStreams = useMemo<RecordStream[]>(
     () =>
       config?.cameras[mainCamera]?.record?.secondary?.enabled
@@ -170,6 +166,36 @@ export function RecordingView({
         : ["primary"],
     [config, mainCamera],
   );
+
+  // Mirrors RecordConfig.timeline_stream() on the backend: open on the
+  // stream with the broadest continuous coverage. Without this, the
+  // recommended dual-stream config (primary continuous.days: 0) would
+  // open the player on a stream that only has segments around review
+  // items, so History would read as empty even though the timeline
+  // beside it -- which already follows timeline_stream() -- shows 24x7
+  // coverage.
+  const defaultRecordStream = useMemo<RecordStream>(() => {
+    const recordConfig = config?.cameras[mainCamera]?.record;
+
+    if (!recordConfig?.secondary?.enabled) {
+      return "primary";
+    }
+
+    return (recordConfig.secondary.continuous?.days ?? 0) >=
+      (recordConfig.continuous?.days ?? 0)
+      ? "secondary"
+      : "primary";
+  }, [config, mainCamera]);
+
+  const [persistedRecordStream, setPersistedRecordStream, recordStreamLoaded] =
+    usePersistence<RecordStream>(`record-stream-${mainCamera}`);
+
+  // Until the persisted choice has loaded, fall back to the config
+  // default rather than assuming primary, so the player doesn't load one
+  // stream's playlist and immediately swap to the other.
+  const recordStream = recordStreamLoaded
+    ? (persistedRecordStream ?? defaultRecordStream)
+    : defaultRecordStream;
 
   const mainCameraReviewItems = useMemo(
     () => reviewItems?.filter((cam) => cam.camera == mainCamera) ?? [],

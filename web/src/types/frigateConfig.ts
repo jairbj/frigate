@@ -228,6 +228,12 @@ export interface CameraConfig {
       days: number;
       mode: string;
     };
+    continuous: {
+      days: number;
+    };
+    motion: {
+      days: number;
+    };
     secondary?: {
       enabled: boolean;
       enabled_in_config?: boolean | null;

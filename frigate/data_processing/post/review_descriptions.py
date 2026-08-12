@@ -29,6 +29,8 @@ from frigate.data_processing.types import PostProcessDataEnum
 from frigate.genai import GenAIClient
 from frigate.genai.manager import GenAIClientManager
 from frigate.models import Recordings, ReviewSegment
+from frigate.record.queries import camera_at_time
+from frigate.record.types import RecordStreamEnum
 from frigate.util.builtin import EventsPerSecond, InferenceSpeed
 from frigate.util.image import get_image_from_recording
 
@@ -429,15 +431,20 @@ class ReviewDescriptionProcessor(PostProcessorApi):
             timestamps = [start_time + (i * step) for i in range(desired_frame_count)]
 
         def extract_frame_from_recording(ts: float) -> bytes | None:
-            """Extract a single frame from recording at given timestamp."""
+            """Extract a single frame from recording at given timestamp.
+
+            Pinned to the primary stream: without the filter the
+            desc()/limit(1) picks whichever stream's covering segment
+            started later, so the vision model would be fed
+            low-resolution frames non-deterministically.
+            """
             try:
                 recording = (
                     Recordings.select(
                         Recordings.path,
                         Recordings.start_time,
                     )
-                    .where((ts >= Recordings.start_time) & (ts <= Recordings.end_time))
-                    .where(Recordings.camera == camera)
+                    .where(camera_at_time(camera, ts, RecordStreamEnum.primary))
                     .order_by(Recordings.start_time.desc())
                     .limit(1)
                     .get()
