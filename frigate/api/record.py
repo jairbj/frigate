@@ -27,8 +27,9 @@ from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
 from frigate.const import RECORD_DIR
 from frigate.models import Event, Recordings
+from frigate.record.mixed import build_mixed_slices
 from frigate.record.queries import camera_range, overlaps
-from frigate.record.types import RecordStreamEnum
+from frigate.record.types import PlaybackStreamEnum
 from frigate.util.time import get_dst_transitions
 
 logger = logging.getLogger(__name__)
@@ -233,9 +234,30 @@ async def recordings(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
     before: float = datetime.now().timestamp(),
-    stream: RecordStreamEnum = RecordStreamEnum.primary,
+    stream: PlaybackStreamEnum = PlaybackStreamEnum.primary,
 ):
     """Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used"""
+    if stream == PlaybackStreamEnum.mixed:
+        # the segment list has to describe exactly what the mixed VOD
+        # playlist contains, since the player maps player time to wall-clock
+        # time by summing these durations
+        return JSONResponse(
+            content=[
+                {
+                    "id": mixed_slice.recording_id,
+                    "start_time": mixed_slice.start_time,
+                    "end_time": mixed_slice.end_time,
+                    "duration": mixed_slice.duration,
+                    "segment_size": mixed_slice.segment_size,
+                    "motion": mixed_slice.motion,
+                    "objects": mixed_slice.objects,
+                    "motion_heatmap": mixed_slice.motion_heatmap,
+                    "stream": mixed_slice.stream.value,
+                }
+                for mixed_slice in build_mixed_slices(camera_name, after, before)
+            ]
+        )
+
     recordings = (
         Recordings.select(
             Recordings.id,

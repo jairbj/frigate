@@ -85,6 +85,7 @@ type VideoControlsProps = {
   containerRef?: React.MutableRefObject<HTMLDivElement | null>;
   availableStreams?: RecordStream[];
   stream?: RecordStream;
+  activeStream?: RecordStream;
   onSetStream?: (stream: RecordStream) => void;
 };
 export default function VideoControls({
@@ -112,6 +113,7 @@ export default function VideoControls({
   containerRef,
   availableStreams,
   stream,
+  activeStream,
   onSetStream,
 }: VideoControlsProps) {
   const { t } = useTranslation("components/player");
@@ -304,8 +306,16 @@ export default function VideoControls({
               }
             }}
           >
-            <DropdownMenuTrigger>
+            <DropdownMenuTrigger className="flex items-center gap-1">
               {t(`stream.${stream}.short`)}
+              {activeStream && activeStream != stream && (
+                <span
+                  className="rounded-sm bg-secondary-foreground/20 px-1 text-[0.65rem] leading-tight text-primary/70"
+                  title={t(`stream.${activeStream}.fallback`)}
+                >
+                  {t(`stream.${activeStream}.short`)}
+                </span>
+              )}
             </DropdownMenuTrigger>
             <DropdownMenuContent
               portalProps={{

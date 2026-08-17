@@ -1,4 +1,4 @@
-import { Recording } from "@/types/record";
+import { Recording, RecordStream } from "@/types/record";
 import { DynamicPlayback } from "@/types/playback";
 import { PreviewController } from "../PreviewPlayer";
 import { TimeRange, TrackingDetailsSequence } from "@/types/timeline";
@@ -126,12 +126,31 @@ export class DynamicVideoController {
 
   getProgress(playerTime: number): number {
     // take a player time in seconds and convert to timestamp in timeline
-    let timestamp = 0;
+    const segment = this.getSegmentAt(playerTime);
+
+    if (!segment) {
+      return 0;
+    }
+
+    return segment.recording.start_time + (playerTime - segment.startedAt);
+  }
+
+  getStreamAt(playerTime: number): RecordStream | undefined {
+    // which recording stream the player is currently showing, which can
+    // change mid playlist when playing the mixed stream
+    return this.getSegmentAt(playerTime)?.recording.stream;
+  }
+
+  private getSegmentAt(
+    playerTime: number,
+  ): { recording: Recording; startedAt: number } | undefined {
+    let match: { recording: Recording; startedAt: number } | undefined;
     let totalTime = 0;
+
     (this.recordings || []).every((segment) => {
       if (totalTime + segment.duration > playerTime) {
         // segment is here
-        timestamp = segment.start_time + (playerTime - totalTime);
+        match = { recording: segment, startedAt: totalTime };
         return false;
       } else {
         totalTime += segment.duration;
@@ -139,7 +158,7 @@ export class DynamicVideoController {
       }
     });
 
-    return timestamp;
+    return match;
   }
 
   scrubToTimestamp(time: number, saveIfNotReady: boolean = false) {

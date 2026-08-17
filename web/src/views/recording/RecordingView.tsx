@@ -159,12 +159,12 @@ export function RecordingView({
 
   // record stream selection (primary/secondary)
 
+  const hasSecondaryStream =
+    config?.cameras[mainCamera]?.record?.secondary?.enabled == true;
+
   const availableRecordStreams = useMemo<RecordStream[]>(
-    () =>
-      config?.cameras[mainCamera]?.record?.secondary?.enabled
-        ? ["primary", "secondary"]
-        : ["primary"],
-    [config, mainCamera],
+    () => (hasSecondaryStream ? ["primary", "secondary"] : ["primary"]),
+    [hasSecondaryStream],
   );
 
   // Mirrors RecordConfig.timeline_stream() on the backend: open on the
@@ -981,6 +981,7 @@ export function RecordingView({
                   containerRef={mainLayoutRef}
                   stream={recordStream}
                   availableStreams={availableRecordStreams}
+                  hasSecondaryStream={hasSecondaryStream}
                   onSetStream={onSetRecordStream}
                 />
               </div>

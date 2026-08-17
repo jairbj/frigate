@@ -68,6 +68,7 @@ type HlsVideoPlayerProps = {
   transformedOverlay?: ReactNode;
   availableStreams?: RecordStream[];
   stream?: RecordStream;
+  activeStream?: RecordStream;
   onSetStream?: (stream: RecordStream) => void;
 };
 
@@ -99,6 +100,7 @@ export default function HlsVideoPlayer({
   transformedOverlay,
   availableStreams,
   stream,
+  activeStream,
   onSetStream,
 }: HlsVideoPlayerProps) {
   const { t } = useTranslation("components/player");
@@ -346,6 +348,7 @@ export default function HlsVideoPlayer({
           }}
           availableStreams={availableStreams}
           stream={stream}
+          activeStream={activeStream}
           onSetStream={onSetStream}
           setControlsOpen={setControlsOpen}
           setMuted={onSetMuted}

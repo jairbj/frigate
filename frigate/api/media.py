@@ -44,8 +44,9 @@ from frigate.const import (
 )
 from frigate.models import Event, Previews, Recordings, Regions, ReviewSegment
 from frigate.output.preview import get_most_recent_preview_frame
+from frigate.record.mixed import build_mixed_slices
 from frigate.record.queries import camera_at_time, camera_range
-from frigate.record.types import RecordStreamEnum
+from frigate.record.types import PlaybackStreamEnum, RecordStreamEnum
 from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.file import (
     get_event_snapshot_bytes,
@@ -548,7 +549,7 @@ async def vod_ts(
     start_ts: float,
     end_ts: float,
     force_discontinuity: bool = False,
-    stream: RecordStreamEnum = RecordStreamEnum.primary,
+    stream: PlaybackStreamEnum = PlaybackStreamEnum.primary,
 ):
     logger.debug(
         "VOD: Generating VOD for %s (%s) from %s to %s with force_discontinuity=%s",
@@ -558,57 +559,96 @@ async def vod_ts(
         end_ts,
         force_discontinuity,
     )
-    recordings = (
-        Recordings.select(
-            Recordings.path,
-            Recordings.duration,
-            Recordings.end_time,
-            Recordings.start_time,
+
+    mixed = stream == PlaybackStreamEnum.mixed
+
+    if mixed:
+        # primary where it exists, secondary in between, so that the playlist
+        # covers the range without holes
+        sources = [
+            {
+                "path": mixed_slice.path,
+                "start_time": mixed_slice.start_time,
+                "end_time": mixed_slice.end_time,
+                # wall-clock duration, so the playlist and the segment list
+                # returned by /<camera>/recordings stay in sync
+                "duration": mixed_slice.duration,
+                "clip_from": mixed_slice.clip_from,
+            }
+            for mixed_slice in build_mixed_slices(camera_name, start_ts, end_ts)
+        ]
+    else:
+        recordings = (
+            Recordings.select(
+                Recordings.path,
+                Recordings.duration,
+                Recordings.end_time,
+                Recordings.start_time,
+            )
+            .where(
+                camera_range(camera_name, start_ts, end_ts, stream.as_record_stream())
+            )
+            .order_by(Recordings.start_time.asc())
+            .iterator()
         )
-        .where(camera_range(camera_name, start_ts, end_ts, stream))
-        .order_by(Recordings.start_time.asc())
-        .iterator()
-    )
+        sources = [
+            {
+                "path": recording.path,
+                "start_time": recording.start_time,
+                "end_time": recording.end_time,
+                "duration": recording.duration,
+                "clip_from": max(0.0, start_ts - recording.start_time),
+            }
+            for recording in recordings
+        ]
 
     clips = []
     durations = []
     min_duration_ms = 100  # Minimum 100ms to ensure at least one video frame
     max_duration_ms = MAX_SEGMENT_DURATION * 1000
 
-    recording: Recordings
-    for recording in recordings:
+    for source in sources:
         logger.debug(
             "VOD: processing recording: %s start=%s end=%s duration=%s",
-            recording.path,
-            recording.start_time,
-            recording.end_time,
-            recording.duration,
+            source["path"],
+            source["start_time"],
+            source["end_time"],
+            source["duration"],
         )
 
-        clip = {"type": "source", "path": recording.path}
-        duration = int(recording.duration * 1000)
+        clip = {"type": "source", "path": source["path"]}
+        duration = int(source["duration"] * 1000)
 
-        # adjust start offset if start_ts is after recording.start_time
-        if start_ts > recording.start_time:
-            inpoint = int((start_ts - recording.start_time) * 1000)
+        # adjust start offset if the source starts before the requested range
+        if source["clip_from"] > 0:
+            inpoint = int(source["clip_from"] * 1000)
             clip["clipFrom"] = inpoint
-            duration -= inpoint
+
+            if not mixed:
+                # mixed durations are already the wall-clock length of the slice
+                duration -= inpoint
+
             logger.debug(
                 "VOD: applied clipFrom %sms to %s",
                 inpoint,
-                recording.path,
+                source["path"],
             )
 
-        # adjust end if recording.end_time is after end_ts
-        if recording.end_time > end_ts:
-            duration -= int((recording.end_time - end_ts) * 1000)
+        # adjust end if the source ends after the requested range
+        if not mixed and source["end_time"] > end_ts:
+            duration -= int((source["end_time"] - end_ts) * 1000)
 
         # nginx-vod-module pushes clipFrom forward to the next keyframe,
         # which can leave too few frames and produce an empty/unplayable
         # segment. Snap clipFrom back to the preceding keyframe so the
         # segment always starts with a decodable frame.
-        if "clipFrom" in clip:
-            keyframe_ms = get_keyframe_before(recording.path, clip["clipFrom"])
+        #
+        # This probes the file with ffprobe, so it is only done for the
+        # single leading clip. Mixed playback also clips the secondary
+        # segments that fill the gaps, which nginx starts at the following
+        # keyframe instead (less than one keyframe interval late).
+        if "clipFrom" in clip and not mixed:
+            keyframe_ms = get_keyframe_before(source["path"], clip["clipFrom"])
             if keyframe_ms is not None:
                 gained = clip["clipFrom"] - keyframe_ms
                 clip["clipFrom"] = keyframe_ms
@@ -616,25 +656,25 @@ async def vod_ts(
                 logger.debug(
                     "VOD: snapped clipFrom to keyframe at %sms for %s, duration now %sms",
                     keyframe_ms,
-                    recording.path,
+                    source["path"],
                     duration,
                 )
             else:
                 # could not read keyframes, remove clipFrom to use full recording
                 logger.debug(
                     "VOD: no keyframe info for %s, removing clipFrom to use full recording",
-                    recording.path,
+                    source["path"],
                 )
                 del clip["clipFrom"]
-                duration = int(recording.duration * 1000)
-                if recording.end_time > end_ts:
-                    duration -= int((recording.end_time - end_ts) * 1000)
+                duration = int(source["duration"] * 1000)
+                if source["end_time"] > end_ts:
+                    duration -= int((source["end_time"] - end_ts) * 1000)
 
         if duration < min_duration_ms:
             # skip if the clip has no valid duration (too short to contain frames)
             logger.debug(
                 "VOD: skipping recording %s - resulting duration %sms too short",
-                recording.path,
+                source["path"],
                 duration,
             )
             continue
@@ -645,12 +685,12 @@ async def vod_ts(
             durations.append(duration)
             logger.debug(
                 "VOD: added clip %s duration_ms=%s clipFrom=%s",
-                recording.path,
+                source["path"],
                 duration,
                 clip.get("clipFrom"),
             )
         else:
-            logger.warning(f"Recording clip is missing or empty: {recording.path}")
+            logger.warning(f"Recording clip is missing or empty: {source['path']}")
 
     if not clips:
         logger.error(
@@ -668,8 +708,10 @@ async def vod_ts(
     return JSONResponse(
         content={
             "cache": hour_ago.timestamp() > start_ts,
-            "discontinuity": force_discontinuity,
-            "consistentSequenceMediaInfo": True,
+            # mixed playback alternates between two encodings, so the clips
+            # have to be treated as discontinuous with varying media info
+            "discontinuity": force_discontinuity or mixed,
+            "consistentSequenceMediaInfo": not mixed,
             "durations": durations,
             "segment_duration": max(durations),
             "sequences": [{"clips": clips}],
@@ -680,11 +722,11 @@ async def vod_ts(
 @router.get(
     "/vod/{camera_name}/stream/{stream}/start/{start_ts}/end/{end_ts}",
     dependencies=[Depends(require_camera_access)],
-    description="Returns an HLS playlist for the specified timestamp-range and stream (primary or secondary) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
+    description="Returns an HLS playlist for the specified timestamp-range and stream (primary, secondary, or mixed) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_ts_stream(
     camera_name: str,
-    stream: RecordStreamEnum,
+    stream: PlaybackStreamEnum,
     start_ts: float,
     end_ts: float,
     force_discontinuity: bool = False,
@@ -783,11 +825,11 @@ async def vod_clip(
 @router.get(
     "/vod/clip/{camera_name}/stream/{stream}/start/{start_ts}/end/{end_ts}",
     dependencies=[Depends(require_camera_access)],
-    description="Returns an HLS playlist for a timestamp range and stream (primary or secondary) with HLS discontinuity enabled. Append /master.m3u8 or /index.m3u8 for HLS playback.",
+    description="Returns an HLS playlist for a timestamp range and stream (primary, secondary, or mixed) with HLS discontinuity enabled. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_clip_stream(
     camera_name: str,
-    stream: RecordStreamEnum,
+    stream: PlaybackStreamEnum,
     start_ts: float,
     end_ts: float,
 ):

@@ -9,7 +9,7 @@ import {
 import { useApiHost } from "@/api";
 import useSWR from "swr";
 import { FrigateConfig } from "@/types/frigateConfig";
-import { Recording, RecordStream } from "@/types/record";
+import { PlaybackStream, Recording, RecordStream } from "@/types/record";
 import { Preview } from "@/types/preview";
 import PreviewPlayer, { PreviewController } from "../PreviewPlayer";
 import { DynamicVideoController } from "./DynamicVideoController";
@@ -57,6 +57,7 @@ type DynamicVideoPlayerProps = {
   transformedOverlay?: ReactNode;
   stream?: RecordStream;
   availableStreams?: RecordStream[];
+  hasSecondaryStream?: boolean;
   onSetStream?: (stream: RecordStream) => void;
 };
 export default function DynamicVideoPlayer({
@@ -80,6 +81,7 @@ export default function DynamicVideoPlayer({
   transformedOverlay,
   stream = "primary",
   availableStreams,
+  hasSecondaryStream = false,
   onSetStream,
 }: DynamicVideoPlayerProps) {
   const { t } = useTranslation(["components/player", "views/live"]);
@@ -134,6 +136,9 @@ export default function DynamicVideoPlayer({
 
   const [isLoading, setIsLoading] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  // the stream the current playhead position comes from, which differs from
+  // the selected one while mixed playback falls back to the secondary stream
+  const [activeStream, setActiveStream] = useState<RecordStream | undefined>();
   const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout>();
 
   // Don't set source until recordings load - we need accurate startPosition
@@ -178,6 +183,7 @@ export default function DynamicVideoPlayer({
         setIsBuffering(false);
       }
 
+      setActiveStream(controller.getStreamAt(time));
       onTimestampUpdate(controller.getProgress(time));
     },
     [controller, onTimestampUpdate, isBuffering, isLoading, isScrubbing],
@@ -240,13 +246,24 @@ export default function DynamicVideoPlayer({
 
   // state of playback player
 
+  // the high resolution stream is often only recorded around review items, so
+  // playing it on its own skips over everything in between. Ask for the mixed
+  // stream instead, which fills those stretches with the low resolution one.
+  const requestedStream: PlaybackStream = useMemo(
+    () =>
+      stream === "primary" && hasSecondaryStream
+        ? "mixed"
+        : (stream as PlaybackStream),
+    [stream, hasSecondaryStream],
+  );
+
   const recordingParams = useMemo(
     () => ({
       before: timeRange.before,
       after: timeRange.after,
-      stream,
+      stream: requestedStream,
     }),
-    [timeRange, stream],
+    [timeRange, requestedStream],
   );
   const { data: recordings } = useSWR<Recording[]>(
     [`${camera}/recordings`, recordingParams],
@@ -278,9 +295,9 @@ export default function DynamicVideoPlayer({
     }
 
     const vodPath =
-      stream === "primary"
+      requestedStream === "primary"
         ? `${camera}/start/${recordingParams.after}/end/${recordingParams.before}`
-        : `${camera}/stream/${stream}/start/${recordingParams.after}/end/${recordingParams.before}`;
+        : `${camera}/stream/${requestedStream}/start/${recordingParams.after}/end/${recordingParams.before}`;
 
     setSource({
       playlist: `${apiHost}vod/${vodPath}/master.m3u8`,
@@ -390,6 +407,7 @@ export default function DynamicVideoPlayer({
           transformedOverlay={transformedOverlay}
           availableStreams={availableStreams}
           stream={stream}
+          activeStream={activeStream}
           onSetStream={onSetStream}
         />
       )}

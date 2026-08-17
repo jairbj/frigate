@@ -362,6 +362,10 @@ record:
 
 The History view's stream selector (next to the playback speed control) lets you switch between the high-resolution and low-resolution recordings for any camera that has a secondary stream configured; cameras without one see no change to the player. The timeline also shades ranges that are only available in low resolution, so you can see at a glance where the primary stream's shorter retention has already expired. [Exports](/usage/exports) can likewise be created from either stream.
 
+With **HD** selected, playback is continuous: Frigate plays the high-resolution recording wherever it exists and automatically falls back to the low-resolution one in between, then switches back when the next high-resolution segment starts. Nothing is skipped, and the playhead advances in real time instead of jumping from one review item to the next. The selector keeps showing `HD`, with a small `SD` badge next to it while the low-resolution fallback is playing. Selecting **SD** plays the low-resolution stream only.
+
+Because the two streams have different encodings, the switch points are HLS discontinuities. Configuring both streams with the same audio setup (for example, `-an` on both, or audio on both) gives the smoothest transitions.
+
 ## Can I have "continuous" recordings, but only at certain times?
 
 Using Frigate UI, Home Assistant, or MQTT, cameras can be automated to only record in certain situations or at certain times.

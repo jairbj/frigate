@@ -3,6 +3,10 @@ import { TimelineType } from "./timeline";
 
 export type RecordStream = "primary" | "secondary";
 
+// what playback asks the API for. "mixed" plays the primary stream and falls
+// back to the secondary one wherever the primary was not recorded
+export type PlaybackStream = RecordStream | "mixed";
+
 export type Recording = {
   id: string;
   camera: string;

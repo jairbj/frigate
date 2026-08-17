@@ -53,11 +53,13 @@
     "label": "Stream",
     "primary": {
       "label": "High resolution",
-      "short": "HD"
+      "short": "HD",
+      "fallback": "Playing the high resolution recording"
     },
     "secondary": {
       "label": "Continuous (low resolution)",
-      "short": "SD"
+      "short": "SD",
+      "fallback": "No high resolution recording here, playing the low resolution one"
     },
     "lowResOnly": "Only available in low resolution"
   }
