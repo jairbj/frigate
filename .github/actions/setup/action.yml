@@ -20,6 +20,8 @@ runs:
     # root-reserve-mb keeps headroom on the root filesystem, which still hosts
     # /opt/hostedtoolcache, /home/runner/.docker and the runner temp dir. The
     # action's 1G default is not enough for them and jobs fail with ENOSPC.
+    # Keep this only as large as it needs to be: whatever is reserved here is
+    # taken away from the build volume, which the large images fill up.
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
       with:
@@ -27,7 +29,7 @@ runs:
         remove-android: 'true'
         remove-haskell: 'true'
         remove-codeql: 'true'
-        root-reserve-mb: '8192'
+        root-reserve-mb: '4096'
         build-mount-path: '/var/lib/docker'
     - name: Start docker
       run: sudo systemctl start docker
