@@ -134,6 +134,12 @@ jobs:
             tensorrt.tags=${{ steps.setup.outputs.image-name }}-tensorrt
             *.cache-from=type=registry,ref=${{ steps.setup.outputs.cache-name }}-tensorrt
             *.cache-to=type=registry,ref=${{ steps.setup.outputs.cache-name }}-tensorrt,mode=max
+      # TensorRT and ROCm are the two largest images and share one builder, so
+      # their layers together do not fit on the build volume. TensorRT is pushed
+      # and its cache exported to the registry by this point, so nothing is lost
+      # by dropping the local build state before starting ROCm.
+      - name: Free build space before the ROCm build
+        run: docker buildx prune --all --force
       - name: AMD/ROCm general build
         env:
           HSA_OVERRIDE: 0
