@@ -51,8 +51,15 @@ class MixedSlice:
 
     @property
     def is_partial(self) -> bool:
-        return self.start_time > self.segment_start_time or (
-            self.end_time < self.segment_start_time + self.segment_duration
+        """True when the slice is only a part of the file it came from.
+
+        A slice that covers a whole file can be concatenated with its
+        neighbors, one that does not has to be clipped on its own.
+        """
+        file_end = self.segment_start_time + self.segment_duration
+        return (
+            self.start_time - self.segment_start_time > MIN_SLICE_DURATION
+            or file_end - self.end_time > MIN_SLICE_DURATION
         )
 
 
@@ -172,3 +179,37 @@ def build_mixed_slices(camera: str, start_ts: float, end_ts: float) -> list[Mixe
     slices.sort(key=lambda s: s.start_time)
 
     return [s for s in slices if s.duration >= MIN_SLICE_DURATION]
+
+
+def group_slices_into_runs(slices: list[MixedSlice]) -> list[list[MixedSlice]]:
+    """Group slices into contiguous runs of the same stream.
+
+    A run is a stretch of playback that comes from one stream without a hole,
+    so the whole run can be handed to nginx-vod-module as a single clip. That
+    matters because the module caps how many clips one request may contain,
+    and a stream recorded in short segments would otherwise produce hundreds
+    of clips per hour.
+
+    Args:
+        slices: Slices in playback order, as returned by build_mixed_slices
+
+    Returns:
+        The runs, in order, each holding at least one slice
+    """
+    runs: list[list[MixedSlice]] = []
+
+    for current in slices:
+        previous = runs[-1][-1] if runs else None
+
+        if (
+            previous is None
+            or previous.stream != current.stream
+            # slice boundaries come from the same wall-clock arithmetic, so a
+            # tolerance well below one frame is enough to spot a real hole
+            or abs(previous.end_time - current.start_time) > MIN_SLICE_DURATION
+        ):
+            runs.append([current])
+        else:
+            runs[-1].append(current)
+
+    return runs

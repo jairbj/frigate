@@ -59,7 +59,7 @@ import {
   ASPECT_WIDE_LAYOUT,
   RecordingSegment,
   RecordingStartingPoint,
-  RecordStream,
+  PlaybackStream,
 } from "@/types/record";
 import { usePersistence } from "@/hooks/use-persistence";
 import { cn } from "@/lib/utils";
@@ -157,38 +157,27 @@ export function RecordingView({
       : timeRange.before - 60,
   );
 
-  // record stream selection (primary/secondary)
+  // record stream selection (high resolution / automatic / low resolution)
 
   const hasSecondaryStream =
     config?.cameras[mainCamera]?.record?.secondary?.enabled == true;
 
-  const availableRecordStreams = useMemo<RecordStream[]>(
-    () => (hasSecondaryStream ? ["primary", "secondary"] : ["primary"]),
+  const availableRecordStreams = useMemo<PlaybackStream[]>(
+    () =>
+      hasSecondaryStream ? ["primary", "mixed", "secondary"] : ["primary"],
     [hasSecondaryStream],
   );
 
-  // Mirrors RecordConfig.timeline_stream() on the backend: open on the
-  // stream with the broadest continuous coverage. Without this, the
-  // recommended dual-stream config (primary continuous.days: 0) would
-  // open the player on a stream that only has segments around review
-  // items, so History would read as empty even though the timeline
-  // beside it -- which already follows timeline_stream() -- shows 24x7
-  // coverage.
-  const defaultRecordStream = useMemo<RecordStream>(() => {
-    const recordConfig = config?.cameras[mainCamera]?.record;
-
-    if (!recordConfig?.secondary?.enabled) {
-      return "primary";
-    }
-
-    return (recordConfig.secondary.continuous?.days ?? 0) >=
-      (recordConfig.continuous?.days ?? 0)
-      ? "secondary"
-      : "primary";
-  }, [config, mainCamera]);
+  // Open on the automatic mode whenever there is a secondary stream to fall
+  // back on: it covers the whole timeline like the low resolution stream
+  // does, so History never opens on a stream that only has segments around
+  // review items, and it still plays high resolution where it exists.
+  const defaultRecordStream: PlaybackStream = hasSecondaryStream
+    ? "mixed"
+    : "primary";
 
   const [persistedRecordStream, setPersistedRecordStream, recordStreamLoaded] =
-    usePersistence<RecordStream>(`record-stream-${mainCamera}`);
+    usePersistence<PlaybackStream>(`record-stream-${mainCamera}`);
 
   // Until the persisted choice has loaded, fall back to the config
   // default rather than assuming primary, so the player doesn't load one
@@ -389,7 +378,7 @@ export function RecordingView({
   );
 
   const onSetRecordStream = useCallback(
-    (newStream: RecordStream) => {
+    (newStream: PlaybackStream) => {
       // reload the player at the current playhead position on the new
       // stream's playlist, rather than resetting to the initial position
       setPlaybackStart(currentTime);
@@ -981,7 +970,6 @@ export function RecordingView({
                   containerRef={mainLayoutRef}
                   stream={recordStream}
                   availableStreams={availableRecordStreams}
-                  hasSecondaryStream={hasSecondaryStream}
                   onSetStream={onSetRecordStream}
                 />
               </div>
@@ -1071,7 +1059,7 @@ export function RecordingView({
             }
             onAnalysisOpen={onAnalysisOpen}
             isPlaying={mainControllerRef?.current?.isPlaying() ?? false}
-            hasSecondaryStream={availableRecordStreams.length > 1}
+            hasSecondaryStream={hasSecondaryStream}
           />
         </div>
       </div>

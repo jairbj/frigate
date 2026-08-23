@@ -9,7 +9,12 @@ import {
 import { useApiHost } from "@/api";
 import useSWR from "swr";
 import { FrigateConfig } from "@/types/frigateConfig";
-import { PlaybackStream, Recording, RecordStream } from "@/types/record";
+import {
+  PlaybackStream,
+  Recording,
+  RecordingPlayerError,
+  RecordStream,
+} from "@/types/record";
 import { Preview } from "@/types/preview";
 import PreviewPlayer, { PreviewController } from "../PreviewPlayer";
 import { DynamicVideoController } from "./DynamicVideoController";
@@ -33,6 +38,9 @@ import {
 } from "@/utils/snapshotUtil";
 import { isFirefox } from "react-device-detect";
 
+// how long to keep showing the loading state when the player reports nothing
+const LOADING_GIVE_UP_MS = 15000;
+
 /**
  * Dynamically switches between video playback and scrubbing preview player.
  */
@@ -55,10 +63,9 @@ type DynamicVideoPlayerProps = {
   toggleFullscreen: () => void;
   containerRef?: React.MutableRefObject<HTMLDivElement | null>;
   transformedOverlay?: ReactNode;
-  stream?: RecordStream;
-  availableStreams?: RecordStream[];
-  hasSecondaryStream?: boolean;
-  onSetStream?: (stream: RecordStream) => void;
+  stream?: PlaybackStream;
+  availableStreams?: PlaybackStream[];
+  onSetStream?: (stream: PlaybackStream) => void;
 };
 export default function DynamicVideoPlayer({
   className,
@@ -81,7 +88,6 @@ export default function DynamicVideoPlayer({
   transformedOverlay,
   stream = "primary",
   availableStreams,
-  hasSecondaryStream = false,
   onSetStream,
 }: DynamicVideoPlayerProps) {
   const { t } = useTranslation(["components/player", "views/live"]);
@@ -139,6 +145,10 @@ export default function DynamicVideoPlayer({
   // the stream the current playhead position comes from, which differs from
   // the selected one while mixed playback falls back to the secondary stream
   const [activeStream, setActiveStream] = useState<RecordStream | undefined>();
+  const [playbackFailed, setPlaybackFailed] = useState(false);
+  // the playlist the automatic fallback has already been tried for, so a
+  // stream that keeps failing does not loop
+  const failedSourceRef = useRef<string | undefined>(undefined);
   const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout>();
 
   // Don't set source until recordings load - we need accurate startPosition
@@ -246,24 +256,13 @@ export default function DynamicVideoPlayer({
 
   // state of playback player
 
-  // the high resolution stream is often only recorded around review items, so
-  // playing it on its own skips over everything in between. Ask for the mixed
-  // stream instead, which fills those stretches with the low resolution one.
-  const requestedStream: PlaybackStream = useMemo(
-    () =>
-      stream === "primary" && hasSecondaryStream
-        ? "mixed"
-        : (stream as PlaybackStream),
-    [stream, hasSecondaryStream],
-  );
-
   const recordingParams = useMemo(
     () => ({
       before: timeRange.before,
       after: timeRange.after,
-      stream: requestedStream,
+      stream,
     }),
-    [timeRange, requestedStream],
+    [timeRange, stream],
   );
   const { data: recordings } = useSWR<Recording[]>(
     [`${camera}/recordings`, recordingParams],
@@ -295,10 +294,11 @@ export default function DynamicVideoPlayer({
     }
 
     const vodPath =
-      requestedStream === "primary"
+      stream === "primary"
         ? `${camera}/start/${recordingParams.after}/end/${recordingParams.before}`
-        : `${camera}/stream/${requestedStream}/start/${recordingParams.after}/end/${recordingParams.before}`;
+        : `${camera}/stream/${stream}/start/${recordingParams.after}/end/${recordingParams.before}`;
 
+    setPlaybackFailed(false);
     setSource({
       playlist: `${apiHost}vod/${vodPath}/master.m3u8`,
       startPosition,
@@ -306,6 +306,52 @@ export default function DynamicVideoPlayer({
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordings]);
+
+  // safety net: the controls are hidden while loading, so a player that never
+  // reports anything back would leave no way to switch streams
+  useEffect(() => {
+    if (!isLoading) {
+      return;
+    }
+
+    const timeout = setTimeout(() => setIsLoading(false), LOADING_GIVE_UP_MS);
+
+    return () => clearTimeout(timeout);
+  }, [isLoading]);
+
+  const onPlaybackError = useCallback(
+    (error: RecordingPlayerError) => {
+      if (isScrubbing) {
+        return;
+      }
+
+      if (error == "stalled") {
+        setIsBuffering(true);
+        return;
+      }
+
+      // playback never started, so nothing will clear the loading state
+      setIsLoading(false);
+      setPlaybackFailed(true);
+
+      const playlist = source?.playlist;
+
+      if (
+        !onSetStream ||
+        stream == "secondary" ||
+        !availableStreams?.includes("secondary") ||
+        failedSourceRef.current == playlist
+      ) {
+        toast.error(t("stream.playbackError"), { position: "top-center" });
+        return;
+      }
+
+      failedSourceRef.current = playlist;
+      toast.error(t("stream.playbackFailed"), { position: "top-center" });
+      onSetStream("secondary");
+    },
+    [isScrubbing, source, stream, availableStreams, onSetStream, t],
+  );
 
   useEffect(() => {
     if (!controller || !recordings?.length) {
@@ -396,11 +442,7 @@ export default function DynamicVideoPlayer({
           getSnapshotUrl={getSnapshotUrlForPlus}
           onSnapshot={onDownloadSnapshot}
           toggleFullscreen={toggleFullscreen}
-          onError={(error) => {
-            if (error == "stalled" && !isScrubbing) {
-              setIsBuffering(true);
-            }
-          }}
+          onError={onPlaybackError}
           isDetailMode={isDetailMode}
           camera={contextCamera || camera}
           currentTimeOverride={currentTime}
@@ -425,12 +467,20 @@ export default function DynamicVideoPlayer({
           setPreviewController(previewController)
         }
       />
-      {!isScrubbing && (isLoading || isBuffering) && !noRecording && (
-        <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
-      )}
+      {!isScrubbing &&
+        (isLoading || isBuffering) &&
+        !noRecording &&
+        !playbackFailed && (
+          <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
+        )}
       {!isScrubbing && !isLoading && noRecording && (
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           {t("noRecordingsFoundForThisTime")}
+        </div>
+      )}
+      {!isScrubbing && !noRecording && playbackFailed && (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          {t("stream.playbackError")}
         </div>
       )}
     </>

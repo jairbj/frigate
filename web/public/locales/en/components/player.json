@@ -56,11 +56,17 @@
       "short": "HD",
       "fallback": "Playing the high resolution recording"
     },
+    "mixed": {
+      "label": "Automatic (high resolution where recorded)",
+      "short": "HD Auto"
+    },
     "secondary": {
       "label": "Continuous (low resolution)",
       "short": "SD",
       "fallback": "No high resolution recording here, playing the low resolution one"
     },
+    "playbackFailed": "Could not play this recording, switched to the low resolution stream",
+    "playbackError": "This recording could not be played",
     "lowResOnly": "Only available in low resolution"
   }
 }

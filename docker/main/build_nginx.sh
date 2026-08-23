@@ -36,6 +36,10 @@ tar -zxf ${VOD_MODULE_VERSION}.tar.gz -C /tmp/nginx-vod-module --strip-component
 rm ${VOD_MODULE_VERSION}.tar.gz
     # Patch MAX_CLIPS to allow more clips to be added than the default 128
 sed -i 's/MAX_CLIPS (128)/MAX_CLIPS (1080)/g' /tmp/nginx-vod-module/vod/media_set.h
+    # Mixed high/low resolution playback sends consistentSequenceMediaInfo=false so the
+    # module emits one init segment per resolution change. That makes it parse every clip
+    # up front, which is capped separately by MAX_CLIPS_PER_REQUEST; raise it to match.
+sed -i 's/MAX_CLIPS_PER_REQUEST (16)/MAX_CLIPS_PER_REQUEST (1080)/g' /tmp/nginx-vod-module/vod/media_set.h
 patch -d /tmp/nginx-vod-module/ -p1 << 'EOF'
 --- a/vod/avc_hevc_parser.c       2022-06-27 11:38:10.000000000 +0000
 +++ b/vod/avc_hevc_parser.c       2023-01-16 11:25:10.900521298 +0000

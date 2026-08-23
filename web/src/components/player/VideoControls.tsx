@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
 import { FaCompress, FaExpand } from "react-icons/fa";
 import { TbCameraDown } from "react-icons/tb";
 import { useTranslation } from "react-i18next";
-import { RecordStream } from "@/types/record";
+import { PlaybackStream, RecordStream } from "@/types/record";
 
 type VideoControls = {
   volume?: boolean;
@@ -83,10 +83,10 @@ type VideoControlsProps = {
   snapshotLoading?: boolean;
   toggleFullscreen?: () => void;
   containerRef?: React.MutableRefObject<HTMLDivElement | null>;
-  availableStreams?: RecordStream[];
-  stream?: RecordStream;
+  availableStreams?: PlaybackStream[];
+  stream?: PlaybackStream;
   activeStream?: RecordStream;
-  onSetStream?: (stream: RecordStream) => void;
+  onSetStream?: (stream: PlaybackStream) => void;
 };
 export default function VideoControls({
   className,
@@ -325,7 +325,7 @@ export default function VideoControls({
             >
               <DropdownMenuRadioGroup
                 value={stream}
-                onValueChange={(value) => onSetStream(value as RecordStream)}
+                onValueChange={(value) => onSetStream(value as PlaybackStream)}
               >
                 {availableStreams.map((s) => (
                   <DropdownMenuRadioItem

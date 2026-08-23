@@ -158,3 +158,119 @@ class TestVodStream(BaseTestHttp):
                 headers={"remote-user": "u", "remote-role": "limited_user"},
             )
             assert allowed.status_code == 200
+
+    def _insert(
+        self,
+        id: str,
+        start: float,
+        end: float,
+        stream: str,
+        camera: str = "front_door",
+    ) -> None:
+        Recordings.insert(
+            id=id,
+            path=id,
+            camera=camera,
+            start_time=start,
+            end_time=end,
+            duration=end - start,
+            stream=stream,
+        ).execute()
+
+    def test_mixed_vod_fills_gaps_and_marks_discontinuity(self):
+        """The mixed route plays primary where it exists and secondary in
+        between, and must declare the media info as varying so the module
+        emits an init segment per resolution change.
+        """
+        self._insert("primary-1", 1000, 1010, "primary")
+        self._insert("secondary-1", 1000, 1010, "secondary")
+        self._insert("secondary-2", 1010, 1020, "secondary")
+
+        with AuthTestClient(self.app) as client:
+            resp = client.get("/vod/front_door/stream/mixed/start/1000/end/1020")
+            assert resp.status_code == 200
+
+            body = resp.json()
+            assert [c["path"] for c in body["sequences"][0]["clips"]] == [
+                "primary-1",
+                "secondary-2",
+            ]
+            assert body["discontinuity"] is True
+            assert body["consistentSequenceMediaInfo"] is False
+
+    def test_mixed_vod_concatenates_consecutive_same_stream_files(self):
+        """Consecutive files of one stream must collapse into a single concat
+        clip: nginx-vod-module caps the clips per request, and a stream cut
+        into short segments would blow past it within minutes.
+        """
+        self._insert("primary-1", 1000, 1010, "primary")
+        for index in range(6):
+            start = 1010 + index
+            self._insert(f"secondary-{index}", start, start + 1, "secondary")
+
+        with AuthTestClient(self.app) as client:
+            resp = client.get("/vod/front_door/stream/mixed/start/1000/end/1016")
+            assert resp.status_code == 200
+
+            clips = resp.json()["sequences"][0]["clips"]
+            assert [c["type"] for c in clips] == ["source", "concat"]
+            assert clips[1]["paths"] == [f"secondary-{i}" for i in range(6)]
+            assert clips[1]["durations"] == [1000] * 6
+            assert resp.json()["durations"] == [10000, 6000]
+
+    def test_mixed_vod_keeps_trimmed_edges_as_their_own_clips(self):
+        """A file the gap only partly covers has to be clipped, so it cannot
+        join the concat clip around it.
+        """
+        self._insert("primary-1", 1000, 1010, "primary")
+        self._insert("secondary-1", 1005, 1015, "secondary")
+        self._insert("secondary-2", 1015, 1025, "secondary")
+
+        with AuthTestClient(self.app) as client:
+            resp = client.get("/vod/front_door/stream/mixed/start/1000/end/1025")
+            assert resp.status_code == 200
+
+            clips = resp.json()["sequences"][0]["clips"]
+            assert [c["type"] for c in clips] == ["source", "source", "source"]
+            assert clips[1]["path"] == "secondary-1"
+            # the first 5s of that file are already covered in high resolution
+            assert clips[1]["clipFrom"] == 5000
+            assert resp.json()["durations"] == [10000, 5000, 10000]
+
+    def test_mixed_vod_keeps_runs_longer_than_a_segment(self):
+        """The maximum duration check guards against a corrupt file, so it
+        must not be applied to a run of healthy files.
+        """
+        self._insert("primary-1", 1000, 1010, "primary")
+
+        for index in range(120):
+            start = 1010 + index * 10
+            self._insert(f"secondary-{index}", start, start + 10, "secondary")
+
+        with AuthTestClient(self.app) as client:
+            resp = client.get("/vod/front_door/stream/mixed/start/1000/end/2210")
+            assert resp.status_code == 200
+
+            body = resp.json()
+            assert [c["type"] for c in body["sequences"][0]["clips"]] == [
+                "source",
+                "concat",
+            ]
+            # 20 minutes of low resolution, well past MAX_SEGMENT_DURATION
+            assert body["durations"] == [10000, 1200000]
+
+    def test_mixed_vod_leaves_segment_duration_to_nginx(self):
+        """A mixed clip can span a whole run, so its length says nothing about
+        how long a playlist segment should be.
+        """
+        self._insert("primary-1", 1000, 1010, "primary")
+        self._insert("secondary-1", 1010, 1020, "secondary")
+
+        with AuthTestClient(self.app) as client:
+            mixed = client.get("/vod/front_door/stream/mixed/start/1000/end/1020")
+            assert mixed.status_code == 200
+            assert "segment_duration" not in mixed.json()
+
+            primary = client.get("/vod/front_door/stream/primary/start/1000/end/1020")
+            assert primary.status_code == 200
+            assert primary.json()["segment_duration"] == 10000

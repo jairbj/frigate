@@ -20,12 +20,16 @@ import { useUserPersistence } from "@/hooks/use-user-persistence";
 import { cn } from "@/lib/utils";
 import {
   ASPECT_VERTICAL_LAYOUT,
+  PlaybackStream,
   RecordingPlayerError,
   RecordStream,
 } from "@/types/record";
 import { useTranslation } from "react-i18next";
 import ObjectTrackOverlay from "@/components/overlay/ObjectTrackOverlay";
 import { useIsAdmin } from "@/hooks/use-is-admin";
+
+// how many times to try recovering from a fatal media error before giving up
+const MAX_MEDIA_RECOVERIES = 2;
 
 // Android native hls does not seek correctly
 const USE_NATIVE_HLS = false;
@@ -66,10 +70,10 @@ type HlsVideoPlayerProps = {
   camera?: string;
   currentTimeOverride?: number;
   transformedOverlay?: ReactNode;
-  availableStreams?: RecordStream[];
-  stream?: RecordStream;
+  availableStreams?: PlaybackStream[];
+  stream?: PlaybackStream;
   activeStream?: RecordStream;
-  onSetStream?: (stream: RecordStream) => void;
+  onSetStream?: (stream: PlaybackStream) => void;
 };
 
 export default function HlsVideoPlayer({
@@ -199,6 +203,42 @@ export default function HlsVideoPlayer({
     };
 
     hlsRef.current = new Hls(hlsConfig);
+
+    // without this the player has no way of knowing playback never started:
+    // it keeps waiting for a frame that will not arrive, and the controls
+    // stay hidden, leaving no way to pick a different stream
+    let mediaRecoveries = 0;
+    hlsRef.current.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) {
+        return;
+      }
+
+      if (
+        data.type == Hls.ErrorTypes.MEDIA_ERROR &&
+        mediaRecoveries < MAX_MEDIA_RECOVERIES
+      ) {
+        // resolution changes between recording streams can upset the media
+        // source; this is usually recoverable
+        mediaRecoveries += 1;
+        hlsRef.current?.recoverMediaError();
+        return;
+      }
+
+      if (
+        data.type == Hls.ErrorTypes.NETWORK_ERROR &&
+        data.details != Hls.ErrorDetails.MANIFEST_LOAD_ERROR &&
+        data.details != Hls.ErrorDetails.MANIFEST_PARSING_ERROR
+      ) {
+        // a segment failed rather than the playlist itself, worth one retry
+        hlsRef.current?.startLoad();
+        return;
+      }
+
+      if (onError != undefined) {
+        onError("startup");
+      }
+    });
+
     hlsRef.current.attachMedia(videoRef.current);
     hlsRef.current.loadSource(currentSource.playlist);
     videoRef.current.playbackRate = currentPlaybackRate;
@@ -211,6 +251,9 @@ export default function HlsVideoPlayer({
         hlsRef.current.destroy();
       }
     };
+    // onError is intentionally left out: it would tear down and rebuild the
+    // hls instance on every render of the parent
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoRef, hlsRef, useHlsCompat, currentSource]);
 
   // state handling
