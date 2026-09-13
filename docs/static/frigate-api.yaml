@@ -5769,6 +5769,71 @@ paths:
             type: boolean
             default: false
             title: Force Discontinuity
+        - name: stream
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RecordStreamEnum'
+            default: primary
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+        - frigateUserAuth: []
+      x-required-role: camera
+  /vod/{camera_name}/stream/{stream}/start/{start_ts}/end/{end_ts}:
+    get:
+      tags:
+        - Media
+      summary: Vod Ts Stream
+      description: |-
+        **Access:** Authenticated user with access to the referenced camera.
+
+        Returns an HLS playlist for the specified timestamp-range and stream (primary or secondary) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.
+      operationId: 
+        vod_ts_stream_vod__camera_name__stream__stream__start__start_ts__end__end_ts__get
+      parameters:
+        - name: camera_name
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            title: Camera Name
+        - name: stream
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/RecordStreamEnum'
+        - name: start_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: Start Ts
+        - name: end_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: End Ts
+        - name: force_discontinuity
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+            title: Force Discontinuity
       responses:
         '200':
           description: Successful Response
@@ -5957,6 +6022,58 @@ paths:
               - type: string
               - type: 'null'
             title: Camera Name
+        - name: start_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: Start Ts
+        - name: end_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: End Ts
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+        - frigateUserAuth: []
+      x-required-role: camera
+  /vod/clip/{camera_name}/stream/{stream}/start/{start_ts}/end/{end_ts}:
+    get:
+      tags:
+        - Media
+      summary: Vod Clip Stream
+      description: |-
+        **Access:** Authenticated user with access to the referenced camera.
+
+        Returns an HLS playlist for a timestamp range and stream (primary or secondary) with HLS discontinuity enabled. Append /master.m3u8 or /index.m3u8 for HLS playback.
+      operationId: 
+        vod_clip_stream_vod_clip__camera_name__stream__stream__start__start_ts__end__end_ts__get
+      parameters:
+        - name: camera_name
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            title: Camera Name
+        - name: stream
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/RecordStreamEnum'
         - name: start_ts
           in: path
           required: true
@@ -6953,6 +7070,12 @@ paths:
           schema:
             type: number
             title: Before
+        - name: stream
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RecordStreamEnum'
+            default: primary
       responses:
         '200':
           description: Successful Response
@@ -7005,6 +7128,11 @@ paths:
             type: integer
             default: 30
             title: Scale
+        - name: stream
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RecordStreamEnum'
       responses:
         '200':
           description: Successful Response
@@ -7340,6 +7468,12 @@ components:
         end_time:
           type: number
           title: End time
+        stream:
+          $ref: '#/components/schemas/RecordStreamEnum'
+          title: Recording stream
+          description: Which recording stream (primary/secondary) to export 
+            from.
+          default: primary
         image_path:
           anyOf:
             - type: string
@@ -8210,6 +8344,12 @@ components:
           title: Chapter mode
           description: Optional chapter metadata to embed in the export. When 
             omitted, the camera's configured export chapter mode is used.
+        stream:
+          $ref: '#/components/schemas/RecordStreamEnum'
+          title: Recording stream
+          description: Which recording stream (primary/secondary) to export 
+            from.
+          default: primary
       type: object
       title: ExportRecordingsBody
     ExportRecordingsCustomBody:
@@ -8232,6 +8372,12 @@ components:
             - type: 'null'
           title: Export case ID
           description: ID of the export case to assign this export to
+        stream:
+          $ref: '#/components/schemas/RecordStreamEnum'
+          title: Recording stream
+          description: Which recording stream (primary/secondary) to export 
+            from.
+          default: primary
         ffmpeg_input_args:
           anyOf:
             - type: string
@@ -8673,6 +8819,12 @@ components:
         - end
       title: PreviewModel
       description: Model representing a single preview clip.
+    RecordStreamEnum:
+      type: string
+      enum:
+        - primary
+        - secondary
+      title: RecordStreamEnum
     RegenerateDescriptionEnum:
       type: string
       enum:
