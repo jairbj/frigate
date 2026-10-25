@@ -17,6 +17,9 @@ runs:
       shell: bash
     # This creates a virtual volume at /var/lib/docker to maximize the size
     # As of 2/14/2024, this results in 97G for docker images
+    # root-reserve-mb keeps headroom on the root filesystem, which still hosts
+    # /opt/hostedtoolcache, /home/runner/.docker and the runner temp dir. The
+    # action's 1G default is not enough for them and jobs fail with ENOSPC.
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
       with:
@@ -24,6 +27,7 @@ runs:
         remove-android: 'true'
         remove-haskell: 'true'
         remove-codeql: 'true'
+        root-reserve-mb: '8192'
         build-mount-path: '/var/lib/docker'
     - name: Start docker
       run: sudo systemctl start docker
@@ -32,8 +36,13 @@ runs:
       uses: ASzc/change-string-case-action@v5
       with:
         string: ${{ github.repository }}
+    # cache-image writes the binfmt image tarball to the root filesystem twice
+    # (runner cache and tool cache), which is wasted space here since the image
+    # is small and pulling it takes a couple of seconds
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
+      with:
+        cache-image: false
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     - name: Log in to the Container registry
