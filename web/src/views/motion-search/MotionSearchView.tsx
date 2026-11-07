@@ -39,6 +39,8 @@ import { DetailStreamProvider } from "@/context/detail-stream-context";
 import MotionReviewTimeline from "@/components/timeline/MotionReviewTimeline";
 import CalendarFilterButton from "@/components/filter/CalendarFilterButton";
 import ExportDialog from "@/components/overlay/ExportDialog";
+import { ExportStreamPrompt } from "@/components/overlay/ExportStreamField";
+import { cameraHasSecondaryRecording } from "@/utils/exportStream";
 import SaveExportOverlay from "@/components/overlay/SaveExportOverlay";
 import ReviewActivityCalendar from "@/components/overlay/ReviewActivityCalendar";
 import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer";
@@ -62,6 +64,7 @@ import {
   ASPECT_WIDE_LAYOUT,
   Recording,
   RecordingSegment,
+  RecordStream,
 } from "@/types/record";
 import { VideoResolutionType } from "@/types/live";
 import {
@@ -202,6 +205,7 @@ export default function MotionSearchView({
   const [exportMode, setExportMode] = useState<ExportMode>("none");
   const [exportRange, setExportRange] = useState<TimeRange>();
   const [showExportPreview, setShowExportPreview] = useState(false);
+  const [exportPromptOpen, setExportPromptOpen] = useState(false);
 
   // Timeline state
   const initialStartTime = timeRange.before - 60;
@@ -354,81 +358,95 @@ export default function MotionSearchView({
     setMobileSettingsMode("actions");
   }, [setExportRangeWithPause, timeRange.before]);
 
-  const handleExportSave = useCallback(() => {
-    if (!exportRange || !selectedCamera) {
-      toast.error(
-        t("export.toast.error.noValidTimeSelected", {
-          ns: "components/dialog",
-        }),
-        {
-          position: "top-center",
-        },
-      );
-      return;
-    }
-
-    if (exportRange.before < exportRange.after) {
-      toast.error(
-        t("export.toast.error.endTimeMustAfterStartTime", {
-          ns: "components/dialog",
-        }),
-        { position: "top-center" },
-      );
-      return;
-    }
-
-    axios
-      .post(
-        `export/${selectedCamera}/start/${Math.round(exportRange.after)}/end/${Math.round(exportRange.before)}`,
-        {
-          playback: "realtime",
-        },
-      )
-      .then((response) => {
-        if (response.status < 300) {
-          toast.success(
-            t("export.toast.success", { ns: "components/dialog" }),
-            {
-              position: "top-center",
-              action: (
-                <a
-                  href={`${baseUrl}export`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Button>
-                    {t("export.toast.view", { ns: "components/dialog" })}
-                  </Button>
-                </a>
-              ),
-            },
-          );
-          setShowExportPreview(false);
-          setExportRange(undefined);
-          setExportMode("none");
-        }
-      })
-      .catch((error) => {
-        const errorMessage =
-          error.response?.data?.message ||
-          error.response?.data?.detail ||
-          "Unknown error";
+  const queueMotionExport = useCallback(
+    (stream: RecordStream) => {
+      if (!exportRange || !selectedCamera) {
         toast.error(
-          t("export.toast.error.failed", {
+          t("export.toast.error.noValidTimeSelected", {
             ns: "components/dialog",
-            error: errorMessage,
+          }),
+          {
+            position: "top-center",
+          },
+        );
+        return;
+      }
+
+      if (exportRange.before < exportRange.after) {
+        toast.error(
+          t("export.toast.error.endTimeMustAfterStartTime", {
+            ns: "components/dialog",
           }),
           { position: "top-center" },
         );
-      });
-  }, [
-    exportRange,
-    selectedCamera,
-    setExportMode,
-    setExportRange,
-    setShowExportPreview,
-    t,
-  ]);
+        return;
+      }
+
+      axios
+        .post(
+          `export/${selectedCamera}/start/${Math.round(exportRange.after)}/end/${Math.round(exportRange.before)}`,
+          {
+            playback: "realtime",
+            stream,
+          },
+        )
+        .then((response) => {
+          if (response.status < 300) {
+            toast.success(
+              t("export.toast.success", { ns: "components/dialog" }),
+              {
+                position: "top-center",
+                action: (
+                  <a
+                    href={`${baseUrl}export`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Button>
+                      {t("export.toast.view", { ns: "components/dialog" })}
+                    </Button>
+                  </a>
+                ),
+              },
+            );
+            setShowExportPreview(false);
+            setExportRange(undefined);
+            setExportMode("none");
+            setExportPromptOpen(false);
+          }
+        })
+        .catch((error) => {
+          const errorMessage =
+            error.response?.data?.message ||
+            error.response?.data?.detail ||
+            "Unknown error";
+          toast.error(
+            t("export.toast.error.failed", {
+              ns: "components/dialog",
+              error: errorMessage,
+            }),
+            { position: "top-center" },
+          );
+        });
+    },
+    [
+      exportRange,
+      selectedCamera,
+      setExportMode,
+      setExportRange,
+      setShowExportPreview,
+      t,
+    ],
+  );
+
+  const handleExportSave = useCallback(() => {
+    if (selectedCamera && cameraHasSecondaryRecording(config, selectedCamera)) {
+      setExportPromptOpen(true);
+      return;
+    }
+
+    queueMotionExport("primary");
+  }, [config, queueMotionExport, selectedCamera]);
 
   useEffect(() => {
     if (!searchRange) {
@@ -1276,6 +1294,11 @@ export default function MotionSearchView({
     >
       <div ref={contentRef} className="flex size-full flex-col pt-2">
         <Toaster closeButton={true} position="top-center" />
+        <ExportStreamPrompt
+          open={exportPromptOpen}
+          onOpenChange={setExportPromptOpen}
+          onConfirm={queueMotionExport}
+        />
         <MotionSearchDialog
           open={isSearchDialogOpen}
           onOpenChange={handleSearchDialogOpenChange}

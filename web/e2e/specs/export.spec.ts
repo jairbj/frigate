@@ -965,6 +965,126 @@ test.describe("Multi-Camera Export from History @high", () => {
   });
 });
 
+test.describe("Dual-stream export quality @high", () => {
+  // Same live-edge deep link the history export tests use, so the
+  // recording view finishes rendering before the export form opens.
+  const playbackTime = Math.floor(Date.now() / 1000) - 300;
+
+  const dualStreamConfig = {
+    cameras: {
+      front_door: {
+        record: {
+          continuous: { days: 0 },
+          secondary: {
+            enabled: true,
+            continuous: { days: 30 },
+            motion: { days: 30 },
+          },
+        },
+      },
+    },
+  };
+
+  async function openExportForm(frigateApp: FrigateApp) {
+    await frigateApp.page.route("**/api/*/recordings**", (route) =>
+      route.fulfill({ json: [] }),
+    );
+    await frigateApp.page.route("**/api/recordings/unavailable**", (route) =>
+      route.fulfill({ json: [] }),
+    );
+
+    await frigateApp.goto(`/review?timestamp=front_door_${playbackTime}`);
+
+    if (frigateApp.isMobile) {
+      await frigateApp.page
+        .getByRole("button", { name: /filters/i })
+        .first()
+        .click({ timeout: 15_000 });
+      await frigateApp.page.getByRole("button", { name: /^export$/i }).click();
+    } else {
+      await frigateApp.page
+        .getByRole("button", { name: /actions/i })
+        .click({ timeout: 15_000 });
+      await frigateApp.page.getByRole("menuitem", { name: /export/i }).click();
+    }
+
+    const form = frigateApp.page.getByRole("dialog");
+    await expect(form).toBeVisible({ timeout: 5_000 });
+    return form;
+  }
+
+  async function captureExportStart(frigateApp: FrigateApp) {
+    let captured: { stream?: string } | null = null;
+    await frigateApp.page.route("**/api/export/*/start/**", async (route) => {
+      captured = route.request().postDataJSON();
+      await route.fulfill({
+        status: 202,
+        json: {
+          success: true,
+          message: "Export queued.",
+          export_id: "front_door_quality",
+          status: "queued",
+        },
+      });
+    });
+    return {
+      stream: () => captured?.stream,
+    };
+  }
+
+  test("asks for continuous SD or HD and exports the chosen stream", async ({
+    frigateApp,
+  }) => {
+    await frigateApp.installDefaults({ config: dualStreamConfig });
+    const captured = await captureExportStart(frigateApp);
+    const form = await openExportForm(frigateApp);
+
+    const quality = form.getByRole("radiogroup", {
+      name: "Recording quality",
+    });
+    await expect(quality).toBeVisible();
+    await expect(
+      quality.getByRole("radio", { name: "SD (continuous)" }),
+    ).toBeChecked();
+    await expect(
+      form.getByText(
+        "Only the recorded HD segments are joined, so the export can have gaps.",
+      ),
+    ).toBeVisible();
+
+    await quality.getByRole("radio", { name: "HD", exact: true }).click();
+    await form.getByRole("button", { name: "Select or Export" }).click();
+
+    await expect.poll(() => captured.stream()).toBe("primary");
+  });
+
+  test("exports the continuous SD stream when that option stays selected", async ({
+    frigateApp,
+  }) => {
+    await frigateApp.installDefaults({ config: dualStreamConfig });
+    const captured = await captureExportStart(frigateApp);
+    const form = await openExportForm(frigateApp);
+
+    await expect(
+      form.getByRole("radio", { name: "SD (continuous)" }),
+    ).toBeChecked();
+    await form.getByRole("button", { name: "Select or Export" }).click();
+
+    await expect.poll(() => captured.stream()).toBe("secondary");
+  });
+
+  test("hides the quality choice when the camera has no secondary stream", async ({
+    frigateApp,
+  }) => {
+    await frigateApp.installDefaults();
+    const form = await openExportForm(frigateApp);
+
+    await expect(
+      form.getByRole("radiogroup", { name: "Recording quality" }),
+    ).toHaveCount(0);
+  });
+});
+
 test.describe("Export Page - Active Job Progress @medium", () => {
   test("encoding job renders percent label and progress bar", async ({
     frigateApp,

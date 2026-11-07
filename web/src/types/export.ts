@@ -31,6 +31,7 @@ export type BatchExportItem = {
   camera: string;
   start_time: number;
   end_time: number;
+  stream?: "primary" | "secondary";
   image_path?: string;
   friendly_name?: string;
   client_item_id?: string;

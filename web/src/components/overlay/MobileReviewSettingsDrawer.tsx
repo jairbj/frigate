@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import useSWR from "swr";
 import { baseUrl } from "@/api/baseUrl";
 import { Drawer, DrawerContent, DrawerTrigger } from "../ui/drawer";
 import { Button } from "../ui/button";
@@ -28,6 +29,10 @@ import { isMobile } from "react-device-detect";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { StartExportResponse } from "@/types/export";
+import { FrigateConfig } from "@/types/frigateConfig";
+import { RecordStream } from "@/types/record";
+import { useExportStream } from "@/hooks/use-export-stream";
+import { exportStreamForCamera } from "@/utils/exportStream";
 import { ShareTimestampContent } from "./ShareTimestampDialog";
 import { useIsAdmin } from "@/hooks/use-is-admin";
 import { cn } from "@/lib/utils";
@@ -84,6 +89,7 @@ type MobileReviewSettingsDrawerProps = {
   setRange: (range: TimeRange | undefined) => void;
   setMode: (mode: ExportMode) => void;
   setShowExportPreview: (showPreview: boolean) => void;
+  preferredStream?: RecordStream;
 };
 export default function MobileReviewSettingsDrawer({
   features = DEFAULT_DRAWER_FEATURES,
@@ -110,6 +116,7 @@ export default function MobileReviewSettingsDrawer({
   setRange,
   setMode,
   setShowExportPreview,
+  preferredStream,
 }: MobileReviewSettingsDrawerProps) {
   const { t } = useTranslation([
     "views/recording",
@@ -120,6 +127,11 @@ export default function MobileReviewSettingsDrawer({
   ]);
   const isAdmin = useIsAdmin();
   const navigate = useNavigate();
+  const { data: config } = useSWR<FrigateConfig>("config");
+  const [exportStream, setExportStream] = useExportStream(
+    mode,
+    preferredStream,
+  );
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("none");
   const [exportTab, setExportTab] = useState<ExportTab>("export");
   const [selectedReplayOption, setSelectedReplayOption] = useState<
@@ -210,6 +222,7 @@ export default function MobileReviewSettingsDrawer({
           source: "recordings",
           name,
           export_case_id: exportCaseId,
+          stream: exportStreamForCamera(config, camera, exportStream),
         },
       );
 
@@ -260,6 +273,8 @@ export default function MobileReviewSettingsDrawer({
     }
   }, [
     camera,
+    config,
+    exportStream,
     isStartingExport,
     name,
     range,
@@ -483,6 +498,9 @@ export default function MobileReviewSettingsDrawer({
           }
         }}
         onSelectFromTimeline={onSelectFromTimeline}
+        camera={camera}
+        exportStream={exportStream}
+        setExportStream={setExportStream}
         onCancel={() => {
           setMode("none");
           setRange(undefined);
@@ -699,6 +717,7 @@ export default function MobileReviewSettingsDrawer({
         range={range}
         showPreview={showExportPreview}
         setShowPreview={setShowExportPreview}
+        stream={exportStreamForCamera(config, camera, exportStream)}
       />
       <Drawer
         open={drawerMode != "none"}

@@ -41,6 +41,9 @@ import { MdAutoAwesome } from "react-icons/md";
 import { GenAISummaryDialog } from "../overlay/chip/GenAISummaryChip";
 import { getTranslatedLabel } from "@/utils/i18n";
 import { formatList } from "@/utils/stringUtil";
+import { RecordStream } from "@/types/record";
+import { cameraHasSecondaryRecording } from "@/utils/exportStream";
+import { ExportStreamPrompt } from "../overlay/ExportStreamField";
 
 type ReviewCardProps = {
   event: ReviewSegment;
@@ -66,7 +69,12 @@ export default function ReviewCard({
 
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [streamPromptOpen, setStreamPromptOpen] = useState(false);
   const bypassDialogRef = useRef(false);
+  const hasSecondaryRecording = cameraHasSecondaryRecording(
+    config,
+    event.camera,
+  );
 
   const onMarkAsReviewed = useCallback(async () => {
     await axios.post(`reviews/viewed`, { ids: [event.id] });
@@ -74,46 +82,62 @@ export default function ReviewCard({
     setOptionsOpen(false);
   }, [event]);
 
-  const onExport = useCallback(async () => {
-    const endTime = event.end_time
-      ? event.end_time + REVIEW_PADDING
-      : Date.now() / 1000;
+  const startExport = useCallback(
+    (stream: RecordStream) => {
+      const endTime = event.end_time
+        ? event.end_time + REVIEW_PADDING
+        : Date.now() / 1000;
 
-    const genAiTitle = event.data.metadata?.title?.trim();
+      const genAiTitle = event.data.metadata?.title?.trim();
 
-    axios
-      .post(
-        `export/${event.camera}/start/${event.start_time - REVIEW_PADDING}/end/${endTime}`,
-        {
-          playback: "realtime",
-          ...(genAiTitle ? { name: genAiTitle } : {}),
-        },
-      )
-      .then((response) => {
-        if (response.status < 300) {
-          toast.success(t("export.toast.success"), {
+      axios
+        .post(
+          `export/${event.camera}/start/${event.start_time - REVIEW_PADDING}/end/${endTime}`,
+          {
+            playback: "realtime",
+            stream,
+            ...(genAiTitle ? { name: genAiTitle } : {}),
+          },
+        )
+        .then((response) => {
+          if (response.status < 300) {
+            toast.success(t("export.toast.success"), {
+              position: "top-center",
+              action: (
+                <a
+                  href={`${baseUrl}export`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button>{t("export.toast.view")}</Button>
+                </a>
+              ),
+            });
+          }
+        })
+        .catch((error) => {
+          const errorMessage =
+            error.response?.data?.message || error.message || "Unknown error";
+          toast.error(t("export.toast.error.failed", { error: errorMessage }), {
             position: "top-center",
-            action: (
-              <a
-                href={`${baseUrl}export`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Button>{t("export.toast.view")}</Button>
-              </a>
-            ),
           });
-        }
-      })
-      .catch((error) => {
-        const errorMessage =
-          error.response?.data?.message || error.message || "Unknown error";
-        toast.error(t("export.toast.error.failed", { error: errorMessage }), {
-          position: "top-center",
         });
-      });
+      setOptionsOpen(false);
+      setStreamPromptOpen(false);
+    },
+    [event, t],
+  );
+
+  const onExport = useCallback(() => {
     setOptionsOpen(false);
-  }, [event, t]);
+
+    if (hasSecondaryRecording) {
+      setStreamPromptOpen(true);
+      return;
+    }
+
+    startExport("primary");
+  }, [hasSecondaryRecording, startExport]);
 
   const onDelete = useCallback(async () => {
     await axios.post(`reviews/delete`, { ids: [event.id] });
@@ -253,9 +277,18 @@ export default function ReviewCard({
     return;
   }
 
+  const streamPrompt = (
+    <ExportStreamPrompt
+      open={streamPromptOpen}
+      onOpenChange={setStreamPromptOpen}
+      onConfirm={startExport}
+    />
+  );
+
   if (isDesktop) {
     return (
       <>
+        {streamPrompt}
         <AlertDialog
           open={deleteDialogOpen}
           onOpenChange={() => setDeleteDialogOpen(!deleteDialogOpen)}
@@ -332,6 +365,7 @@ export default function ReviewCard({
 
   return (
     <>
+      {streamPrompt}
       <AlertDialog
         open={deleteDialogOpen}
         onOpenChange={() => setDeleteDialogOpen(!deleteDialogOpen)}

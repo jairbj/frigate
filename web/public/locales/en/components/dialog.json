@@ -52,6 +52,16 @@
     "name": {
       "placeholder": "Name the Export"
     },
+    "quality": {
+      "label": "Recording quality",
+      "description": "Choose which recording to export. Continuous SD keeps the full time range. HD joins only the high-resolution segments, so the video can skip the gaps between them.",
+      "sd": "SD (continuous)",
+      "sdDescription": "Low resolution, continuous across the selected time range.",
+      "hd": "HD",
+      "hdDescription": "High resolution. Only the recorded HD segments are joined, so the export can have gaps.",
+      "mixedCameras": "Cameras without a continuous stream are exported in HD.",
+      "promptTitle": "Choose the export quality"
+    },
     "case": {
       "newCaseOption": "Create new case",
       "newCaseNamePlaceholder": "New case name",
