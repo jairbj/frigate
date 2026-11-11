@@ -742,6 +742,7 @@ export function RecordingView({
                 }}
                 setMode={setExportMode}
                 setShowPreview={setShowExportPreview}
+                preferredStream={recordStream}
               />
             )}
             {isDesktop && (
@@ -888,6 +889,7 @@ export function RecordingView({
               setRange={setExportRange}
               setMode={setExportMode}
               setShowExportPreview={setShowExportPreview}
+              preferredStream={recordStream}
             />
           </div>
         </div>

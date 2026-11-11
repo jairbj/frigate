@@ -66,6 +66,15 @@ import { Textarea } from "../ui/textarea";
 import { useIsAdmin } from "@/hooks/use-is-admin";
 import { isReplayCamera } from "@/utils/cameraUtil";
 import { isValidIconName } from "@/utils/iconUtil";
+import { RecordStream } from "@/types/record";
+import { useExportStream } from "@/hooks/use-export-stream";
+import {
+  anyCameraHasSecondaryRecording,
+  cameraHasSecondaryRecording,
+  exportStreamForCamera,
+  recordingExportVodUrl,
+} from "@/utils/exportStream";
+import { ExportStreamField } from "./ExportStreamField";
 
 const EXPORT_OPTIONS = [
   "1",
@@ -94,6 +103,7 @@ type ExportDialogProps = {
   setRange: (range: TimeRange | undefined) => void;
   setMode: (mode: ExportMode) => void;
   setShowPreview: (showPreview: boolean) => void;
+  preferredStream?: RecordStream;
 };
 
 export default function ExportDialog({
@@ -107,8 +117,14 @@ export default function ExportDialog({
   setRange,
   setMode,
   setShowPreview,
+  preferredStream,
 }: ExportDialogProps) {
   const { t } = useTranslation(["components/dialog"]);
+  const { data: config } = useSWR<FrigateConfig>("config");
+  const [exportStream, setExportStream] = useExportStream(
+    mode,
+    preferredStream,
+  );
   const [name, setName] = useState("");
   const [selectedCaseId, setSelectedCaseId] = useState<string | undefined>();
   const [singleNewCaseName, setSingleNewCaseName] = useState("");
@@ -179,6 +195,7 @@ export default function ExportDialog({
           source: "recordings",
           name,
           export_case_id: exportCaseId,
+          stream: exportStreamForCamera(config, camera, exportStream),
         },
       );
 
@@ -224,6 +241,8 @@ export default function ExportDialog({
     }
   }, [
     camera,
+    config,
+    exportStream,
     isStartingExport,
     name,
     range,
@@ -274,6 +293,7 @@ export default function ExportDialog({
         range={range}
         showPreview={showPreview}
         setShowPreview={setShowPreview}
+        stream={exportStreamForCamera(config, camera, exportStream)}
       />
       <SaveExportOverlay
         className="pointer-events-none absolute left-1/2 top-8 z-50 -translate-x-1/2"
@@ -360,6 +380,9 @@ export default function ExportDialog({
             setMode={setMode}
             onSelectFromTimeline={onSelectFromTimeline}
             onCancel={handleCancel}
+            camera={camera}
+            exportStream={exportStream}
+            setExportStream={setExportStream}
           />
         </Content>
       </Overlay>
@@ -394,6 +417,9 @@ type ExportContentProps = {
   setMode: (mode: ExportMode) => void;
   onSelectFromTimeline: (range: TimeRange) => void;
   onCancel: () => void;
+  camera: string;
+  exportStream: RecordStream;
+  setExportStream: (stream: RecordStream) => void;
 };
 
 export function ExportContent({
@@ -423,6 +449,9 @@ export function ExportContent({
   setMode,
   onSelectFromTimeline,
   onCancel,
+  camera,
+  exportStream,
+  setExportStream,
 }: ExportContentProps) {
   const { t } = useTranslation(["components/dialog"]);
   const isAdmin = useIsAdmin();
@@ -640,6 +669,17 @@ export function ExportContent({
     [latestTime, setRange],
   );
 
+  // "Last Hour" is selected by default, but the range is only written when
+  // that option is chosen. Mobile opens this form without a preset range,
+  // so apply the visible selection once or Export has nothing to send.
+  useEffect(() => {
+    if (activeTab !== "export" || range || selectedOption === "timeline") {
+      return;
+    }
+
+    onSelectTime(selectedOption);
+  }, [activeTab, onSelectTime, range, selectedOption]);
+
   const toggleCameraSelection = useCallback((cameraId: string) => {
     setHasManualCameraSelection(true);
     setSelectedCameraIds((previous) =>
@@ -742,6 +782,7 @@ export function ExportContent({
         camera: cameraId,
         start_time: Math.round(range.after),
         end_time: Math.round(range.before),
+        stream: exportStreamForCamera(config, cameraId, exportStream),
         friendly_name: name
           ? `${name} - ${resolveCameraName(config, cameraId)}`
           : undefined,
@@ -852,6 +893,7 @@ export function ExportContent({
   }, [
     batchCaseSelection,
     config,
+    exportStream,
     isAdmin,
     isStartingBatchExport,
     name,
@@ -869,6 +911,17 @@ export function ExportContent({
     setSelectedCaseId,
     t,
   ]);
+
+  const showSingleStreamChoice = cameraHasSecondaryRecording(config, camera);
+  const showMultiStreamChoice = anyCameraHasSecondaryRecording(
+    config,
+    selectedCameraIds,
+  );
+  const showMixedCameraNote =
+    showMultiStreamChoice &&
+    selectedCameraIds.some(
+      (cameraId) => !cameraHasSecondaryRecording(config, cameraId),
+    );
 
   return (
     <div
@@ -912,6 +965,13 @@ export function ExportContent({
             !isDesktop && "min-h-0 flex-1 overflow-y-auto pr-1",
           )}
         >
+          {showSingleStreamChoice && (
+            <ExportStreamField
+              idPrefix="export-stream-single"
+              value={exportStream}
+              onChange={setExportStream}
+            />
+          )}
           <RadioGroup
             className={`flex flex-col gap-4 ${isDesktop ? "" : "mt-1"}`}
             onValueChange={(value) => onSelectTime(value as ExportOption)}
@@ -1019,6 +1079,14 @@ export function ExportContent({
             !isDesktop && "min-h-0 flex-1 overflow-y-auto pr-1",
           )}
         >
+          {showMultiStreamChoice && (
+            <ExportStreamField
+              idPrefix="export-stream-multi"
+              value={exportStream}
+              onChange={setExportStream}
+              showMixedCamerasNote={showMixedCameraNote}
+            />
+          )}
           <div className="space-y-2">
             <Label className="text-sm text-primary">
               {t("export.multiCamera.timeRange")}
@@ -1361,6 +1429,7 @@ type ExportPreviewDialogProps = {
   range?: TimeRange;
   showPreview: boolean;
   setShowPreview: (showPreview: boolean) => void;
+  stream?: RecordStream;
 };
 
 export function ExportPreviewDialog({
@@ -1368,13 +1437,19 @@ export function ExportPreviewDialog({
   range,
   showPreview,
   setShowPreview,
+  stream = "primary",
 }: ExportPreviewDialogProps) {
   const { t } = useTranslation(["components/dialog"]);
   if (!range) {
     return null;
   }
 
-  const source = `${baseUrl}vod/${camera}/start/${range.after}/end/${range.before}/index.m3u8`;
+  const source = recordingExportVodUrl(
+    camera,
+    range.after,
+    range.before,
+    stream,
+  );
 
   return (
     <Dialog open={showPreview} onOpenChange={setShowPreview}>

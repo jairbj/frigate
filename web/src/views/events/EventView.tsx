@@ -65,7 +65,7 @@ import PreviewPlayer, {
   PreviewController,
 } from "@/components/player/PreviewPlayer";
 import SummaryTimeline from "@/components/timeline/SummaryTimeline";
-import { RecordingStartingPoint } from "@/types/record";
+import { RecordingStartingPoint, RecordStream } from "@/types/record";
 import VideoControls from "@/components/player/VideoControls";
 import { TimeRange } from "@/types/timeline";
 import { useAllowedCameras } from "@/hooks/use-allowed-cameras";
@@ -96,6 +96,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import ReviewActivityCalendar from "@/components/overlay/ReviewActivityCalendar";
+import { ExportStreamPrompt } from "@/components/overlay/ExportStreamField";
+import { cameraHasSecondaryRecording } from "@/utils/exportStream";
 import PlatformAwareDialog from "@/components/overlay/dialog/PlatformAwareDialog";
 import MotionPreviewsPane from "./MotionPreviewsPane";
 import { EmptyCard } from "@/components/card/EmptyCard";
@@ -265,14 +267,11 @@ export default function EventView({
     }
   }, [currentReviewItems, selectedReviews]);
 
-  const exportReview = useCallback(
-    (id: string) => {
-      const review = reviewItems?.all?.find((seg) => seg.id == id);
+  const [pendingExportReview, setPendingExportReview] =
+    useState<ReviewSegment | null>(null);
 
-      if (!review) {
-        return;
-      }
-
+  const postReviewExport = useCallback(
+    (review: ReviewSegment, stream: RecordStream) => {
       const endTime = review.end_time
         ? review.end_time + REVIEW_PADDING
         : Date.now() / 1000;
@@ -280,7 +279,11 @@ export default function EventView({
       axios
         .post(
           `export/${review.camera}/start/${review.start_time - REVIEW_PADDING}/end/${endTime}`,
-          { playback: "realtime", image_path: review.thumb_path },
+          {
+            playback: "realtime",
+            image_path: review.thumb_path,
+            stream,
+          },
         )
         .then((response) => {
           if (response.status < 300) {
@@ -311,15 +314,34 @@ export default function EventView({
           toast.error(
             t("export.toast.error.failed", {
               ns: "components/dialog",
-              message: errorMessage,
+              error: errorMessage,
             }),
             {
               position: "top-center",
             },
           );
         });
+      setPendingExportReview(null);
     },
-    [reviewItems, t],
+    [t],
+  );
+
+  const exportReview = useCallback(
+    (id: string) => {
+      const review = reviewItems?.all?.find((seg) => seg.id == id);
+
+      if (!review) {
+        return;
+      }
+
+      if (cameraHasSecondaryRecording(config, review.camera)) {
+        setPendingExportReview(review);
+        return;
+      }
+
+      postReviewExport(review, "primary");
+    },
+    [config, postReviewExport, reviewItems],
   );
 
   const [motionOnly, setMotionOnly] = useState(false);
@@ -365,6 +387,19 @@ export default function EventView({
   return (
     <div className="flex size-full flex-col pt-2 md:py-2">
       <Toaster closeButton={true} />
+      <ExportStreamPrompt
+        open={pendingExportReview != null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingExportReview(null);
+          }
+        }}
+        onConfirm={(stream) => {
+          if (pendingExportReview) {
+            postReviewExport(pendingExportReview, stream);
+          }
+        }}
+      />
       {!motionPreviewsOpen && (
         <div className="relative mb-2 flex h-11 items-center justify-between pl-2 pr-2 md:pl-3">
           {isMobile && (

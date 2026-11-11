@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isDesktop } from "react-device-detect";
 import axios from "axios";
 import { toast } from "sonner";
@@ -48,6 +48,13 @@ import { resolveCameraName } from "@/hooks/use-camera-friendly-name";
 import { useDateLocale } from "@/hooks/use-date-locale";
 import { useIsAdmin } from "@/hooks/use-is-admin";
 import { formatUnixTimestampToDateTime } from "@/utils/dateUtil";
+import { RecordStream } from "@/types/record";
+import {
+  anyCameraHasSecondaryRecording,
+  cameraHasSecondaryRecording,
+  exportStreamForCamera,
+} from "@/utils/exportStream";
+import { ExportStreamField } from "./ExportStreamField";
 
 type MultiExportDialogProps = {
   selectedReviews: ReviewSegment[];
@@ -74,6 +81,7 @@ export default function MultiExportDialog({
   const { data: cases } = useSWR<ExportCase[]>(isAdmin ? "cases" : null);
 
   const [open, setOpen] = useState(false);
+  const [exportStream, setExportStream] = useState<RecordStream>("secondary");
   const [caseSelection, setCaseSelection] = useState<string>(NONE_CASE_OPTION);
   const [newCaseName, setNewCaseName] = useState("");
   const [newCaseDescription, setNewCaseDescription] = useState("");
@@ -134,8 +142,29 @@ export default function MultiExportDialog({
     setCaseSelection(NONE_CASE_OPTION);
     setNewCaseName("");
     setNewCaseDescription("");
+    setExportStream("secondary");
     setIsExporting(false);
   }, []);
+
+  const reviewCameras = useMemo(
+    () => selectedReviews.map((review) => review.camera),
+    [selectedReviews],
+  );
+  const showStreamChoice = anyCameraHasSecondaryRecording(
+    config,
+    reviewCameras,
+  );
+  const showMixedCameraNote =
+    showStreamChoice &&
+    reviewCameras.some(
+      (camera) => !cameraHasSecondaryRecording(config, camera),
+    );
+
+  useEffect(() => {
+    if (open) {
+      setExportStream("secondary");
+    }
+  }, [open]);
 
   const handleOpenChange = useCallback(
     (next: boolean) => {
@@ -176,6 +205,7 @@ export default function MultiExportDialog({
       camera: review.camera,
       start_time: review.start_time - REVIEW_PADDING,
       end_time: (review.end_time ?? Date.now() / 1000) + REVIEW_PADDING,
+      stream: exportStreamForCamera(config, review.camera, exportStream),
       image_path: review.thumb_path || undefined,
       friendly_name: review.data.metadata?.title?.trim() || undefined,
       client_item_id: review.id,
@@ -273,6 +303,8 @@ export default function MultiExportDialog({
   }, [
     canSubmit,
     caseSelection,
+    config,
+    exportStream,
     formatFailureLabel,
     isAdmin,
     isNewCase,
@@ -307,6 +339,14 @@ export default function MultiExportDialog({
 
   const body = (
     <div className="flex flex-col gap-4">
+      {showStreamChoice && (
+        <ExportStreamField
+          idPrefix="export-stream-reviews"
+          value={exportStream}
+          onChange={setExportStream}
+          showMixedCamerasNote={showMixedCameraNote}
+        />
+      )}
       {isAdmin && (
         <div className="space-y-2">
           <Label className="text-sm text-secondary-foreground">

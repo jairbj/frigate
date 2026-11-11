@@ -360,7 +360,7 @@ record:
 
 ### Playback and export
 
-The History view's stream selector (next to the playback speed control) lets you switch between the high-resolution and low-resolution recordings for any camera that has a secondary stream configured; cameras without one see no change to the player. The timeline also shades ranges that are only available in low resolution, so you can see at a glance where the primary stream's shorter retention has already expired. [Exports](/usage/exports) can likewise be created from either stream.
+The History view's stream selector (next to the playback speed control) lets you switch between the high-resolution and low-resolution recordings for any camera that has a secondary stream configured; cameras without one see no change to the player. The timeline also shades ranges that are only available in low resolution, so you can see at a glance where the primary stream's shorter retention has already expired. [Exports](/usage/exports) ask whether to save the continuous low-resolution stream or the high-resolution stream. A high-resolution export includes only the segments that were recorded in HD, so gaps between detections are left out of the file. Cameras without a secondary stream keep exporting the primary recording, with no extra choice.
 
 ## Can I have "continuous" recordings, but only at certain times?
 

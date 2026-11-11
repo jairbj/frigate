@@ -24,6 +24,13 @@ There are a few ways to create an export:
 
 In every case you can give the export a name. Frigate then saves the footage from your recordings as a single video file. Larger ranges take time to process; the export is marked _in progress_ until it finishes, and you can keep using Frigate while it runs.
 
+If the camera records a [continuous low-resolution stream](/configuration/record#recording-a-secondary-continuous-low-resolution-stream) as well as high-resolution footage, the export form asks which one to save:
+
+- **SD (continuous)** keeps the whole selected time range in one video.
+- **HD** joins only the high-resolution segments. A range that is not fully covered in HD comes out shorter, with the gaps between those segments removed.
+
+Cameras that do not record a second stream skip the question and export the primary recording.
+
 ## Managing exports
 
 All of your exports live on the **Exports** page, reachable from the main navigation, where you can search for one by name. Each export offers the following actions:
