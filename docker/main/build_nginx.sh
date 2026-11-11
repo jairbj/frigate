@@ -39,14 +39,14 @@ patch -d /tmp/nginx-vod-module/ -p1 << 'EOF'
 --- a/vod/avc_hevc_parser.c
 +++ b/vod/avc_hevc_parser.c
 @@ -2,6 +2,9 @@
-
-bool_t
-avc_hevc_parser_rbsp_trailing_bits(bit_reader_state_t* reader) {
+ 
+ bool_t
+ avc_hevc_parser_rbsp_trailing_bits(bit_reader_state_t* reader) {
 +	// https://github.com/blakeblackshear/frigate/issues/4572
 +	return TRUE;
 +
  	uint32_t one_bit;
-
+ 
  	if (reader->stream.eof_reached) {
 EOF
 
